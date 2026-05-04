@@ -84,6 +84,7 @@ private fun FitStepApp(activity: ComponentActivity) {
     var stride by remember { mutableStateOf("0.75") }
     var walkTarget by remember { mutableStateOf("1000") }
     var directSteps by remember { mutableStateOf("500") }
+    var directStatus by remember { mutableStateOf("Idle") }
 
     val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         when (val signInResult = signInManager.parseResult(result.data)) {
@@ -170,17 +171,30 @@ private fun FitStepApp(activity: ComponentActivity) {
                         steps = directSteps,
                         onStepsChange = { directSteps = it },
                         enabled = hasHealthPermission,
+                        directStatus = directStatus,
                         onWrite = {
                             val steps = directSteps.toLongOrNull() ?: 0
+                            if (steps <= 0) {
+                                directStatus = "Enter a positive step count"
+                                status = directStatus
+                                return@ModeDirectCard
+                            }
+                            directStatus = "Writing $steps steps to Health Connect..."
+                            status = directStatus
                             scope.launch {
                                 runCatching {
                                     val writer = HealthConnectStepWriter(healthGateway.client())
                                     val interval = planner.directInterval(steps, Instant.now())
                                     writer.write(interval)
                                     val total = writer.readTotal(interval.start, interval.end)
-                                    status = "Requested $steps steps; Health Connect aggregate reads $total steps in that interval"
+                                    "Requested $steps steps; Health Connect aggregate reads $total steps in that interval"
                                 }.onFailure {
-                                    status = it.message ?: "Direct write failed"
+                                    val message = it.message ?: "Direct write failed"
+                                    directStatus = message
+                                    status = message
+                                }.onSuccess { message ->
+                                    directStatus = message
+                                    status = message
                                 }
                             }
                         },
@@ -297,6 +311,7 @@ private fun ModeDirectCard(
     steps: String,
     onStepsChange: (String) -> Unit,
     enabled: Boolean,
+    directStatus: String,
     onWrite: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -313,6 +328,7 @@ private fun ModeDirectCard(
                 Icon(Icons.Default.CheckCircle, contentDescription = null)
                 Text("Write now")
             }
+            Text(directStatus, style = MaterialTheme.typography.bodySmall)
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 "Google Fit display requires Google Fit to sync with Health Connect on this device.",

@@ -1,3 +1,12 @@
+# v1.0.2
+
+Foreground service and direct-entry feedback fix.
+
+## Fixed
+
+- Paced walking no longer starts a `health` foreground service. Android 14/15 require extra sensor or activity-recognition permissions for that type, so the service now uses `dataSync`, which matches periodic Health Connect writes.
+- Direct step entry now immediately displays a writing state and shows the final success/error message inside the direct-entry card.
+
 # v1.0.1
 
 Google Sign-In diagnostics release.
