@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Fit Step Controller</string>
+    <string name="health_notification_channel">Walking sessions</string>
+</resources>

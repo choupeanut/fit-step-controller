@@ -1,0 +1,2 @@
+-keep class androidx.health.connect.** { *; }
+-keep class com.google.android.gms.auth.api.signin.** { *; }
