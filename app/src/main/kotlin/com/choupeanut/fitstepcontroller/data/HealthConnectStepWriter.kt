@@ -2,6 +2,7 @@ package com.choupeanut.fitstepcontroller.data
 
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.StepsRecord
+import androidx.health.connect.client.records.metadata.DataOrigin
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
@@ -13,6 +14,7 @@ import java.time.ZoneId
 class HealthConnectStepWriter(
     private val client: HealthConnectClient,
     private val zoneId: ZoneId = ZoneId.systemDefault(),
+    private val appPackageName: String? = null,
 ) : StepWriter {
     override suspend fun write(interval: StepWriteInterval): StepWriteResult {
         require(interval.count > 0) { "count must be positive" }
@@ -49,6 +51,7 @@ class HealthConnectStepWriter(
             ReadRecordsRequest(
                 recordType = StepsRecord::class,
                 timeRangeFilter = TimeRangeFilter.between(start, end),
+                dataOriginFilter = appPackageName?.let { setOf(DataOrigin(it)) } ?: emptySet(),
             )
         ).records
     }

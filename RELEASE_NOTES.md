@@ -1,3 +1,18 @@
+# v1.0.3
+
+Step interval and walking progress fix.
+
+## Fixed
+
+- Direct step entry now allocates non-overlapping historical time windows. Repeated submissions no longer write 1,000 steps into the same recent minutes, which caused Health Connect and Google Fit aggregation to dedupe or normalize the apparent increase.
+- Direct entry now reports both this app's raw step records and Health Connect aggregate totals for the written interval.
+- Paced walking no longer writes a chunk immediately at start. It writes after each real elapsed interval, so paused time is not counted.
+
+## Added
+
+- Paced walking progress bar on the main screen.
+- Paced walking Pause, Resume, and Stop controls on the main screen.
+
 # v1.0.2
 
 Foreground service and direct-entry feedback fix.

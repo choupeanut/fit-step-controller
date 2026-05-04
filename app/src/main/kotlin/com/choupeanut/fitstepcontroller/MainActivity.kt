@@ -1,7 +1,10 @@
 package com.choupeanut.fitstepcontroller
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -32,12 +35,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,12 +58,23 @@ import com.choupeanut.fitstepcontroller.auth.GoogleSignInResult
 import com.choupeanut.fitstepcontroller.auth.GoogleSignInManager
 import com.choupeanut.fitstepcontroller.data.HealthConnectGateway
 import com.choupeanut.fitstepcontroller.data.HealthConnectStepWriter
+import com.choupeanut.fitstepcontroller.data.StepWriteCursorStore
 import com.choupeanut.fitstepcontroller.domain.StepPlanner
+import com.choupeanut.fitstepcontroller.domain.StepWindowAllocator
 import com.choupeanut.fitstepcontroller.domain.WalkingPlanInput
 import com.choupeanut.fitstepcontroller.service.WalkingSessionService
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import kotlinx.coroutines.launch
 import java.time.Instant
+
+data class WalkingUiState(
+    val state: String = "Idle",
+    val writtenSteps: Long = 0,
+    val targetSteps: Long = 0,
+    val percent: Int = 0,
+    val isActive: Boolean = false,
+    val isPaused: Boolean = false,
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,6 +92,7 @@ private fun FitStepApp(activity: ComponentActivity) {
     val signInManager = remember { GoogleSignInManager(activity) }
     val healthGateway = remember { HealthConnectGateway(activity) }
     val planner = remember { StepPlanner() }
+    val cursorStore = remember { StepWriteCursorStore(activity) }
 
     var account by remember { mutableStateOf<GoogleSignInAccount?>(null) }
     var hasHealthPermission by remember { mutableStateOf(false) }
@@ -85,6 +102,7 @@ private fun FitStepApp(activity: ComponentActivity) {
     var walkTarget by remember { mutableStateOf("1000") }
     var directSteps by remember { mutableStateOf("500") }
     var directStatus by remember { mutableStateOf("Idle") }
+    var walkingUiState by remember { mutableStateOf(WalkingUiState()) }
 
     val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         when (val signInResult = signInManager.parseResult(result.data)) {
@@ -108,6 +126,37 @@ private fun FitStepApp(activity: ComponentActivity) {
         account = signInManager.lastSignedInAccount(activity)
         if (healthGateway.status() == HealthConnectClient.SDK_AVAILABLE) {
             hasHealthPermission = healthGateway.hasPermissions()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != WalkingSessionService.ACTION_PROGRESS) return
+                val target = intent.getLongExtra(WalkingSessionService.EXTRA_TARGET_STEPS, 0L)
+                val written = intent.getLongExtra(WalkingSessionService.EXTRA_WRITTEN_STEPS, 0L)
+                val progressState = intent.getStringExtra(WalkingSessionService.EXTRA_STATE) ?: "Running"
+                val percent = intent.getIntExtra(WalkingSessionService.EXTRA_PERCENT, 0)
+                val isPaused = intent.getBooleanExtra(WalkingSessionService.EXTRA_PAUSED, false)
+                walkingUiState = WalkingUiState(
+                    state = progressState,
+                    writtenSteps = written,
+                    targetSteps = target,
+                    percent = percent,
+                    isActive = progressState != "Stopped" && target > 0 && written < target,
+                    isPaused = isPaused,
+                )
+            }
+        }
+        val filter = IntentFilter(WalkingSessionService.ACTION_PROGRESS)
+        if (Build.VERSION.SDK_INT >= 33) {
+            activity.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            activity.registerReceiver(receiver, filter)
+        }
+        onDispose {
+            activity.unregisterReceiver(receiver)
         }
     }
 
@@ -145,6 +194,7 @@ private fun FitStepApp(activity: ComponentActivity) {
                         onStrideChange = { stride = it },
                         planner = planner,
                         enabled = hasHealthPermission,
+                        walkingUiState = walkingUiState,
                         onStart = {
                             val target = walkTarget.toLongOrNull() ?: 0
                             val strideMeters = stride.toDoubleOrNull() ?: 0.75
@@ -159,10 +209,29 @@ private fun FitStepApp(activity: ComponentActivity) {
                             }
                             val intent = WalkingSessionService.startIntent(activity, plan.speedKmh, plan.targetSteps, plan.strideMeters)
                             ContextCompat.startForegroundService(activity, intent)
+                            walkingUiState = WalkingUiState(
+                                state = "Starting",
+                                writtenSteps = 0,
+                                targetSteps = plan.targetSteps,
+                                percent = 0,
+                                isActive = true,
+                                isPaused = false,
+                            )
                             status = "Walking mode started for ${plan.targetSteps} steps"
+                        },
+                        onPause = {
+                            activity.startService(WalkingSessionService.pauseIntent(activity))
+                            walkingUiState = walkingUiState.copy(state = "Paused", isPaused = true)
+                            status = "Walking mode paused"
+                        },
+                        onResume = {
+                            activity.startService(WalkingSessionService.resumeIntent(activity))
+                            walkingUiState = walkingUiState.copy(state = "Running", isPaused = false)
+                            status = "Walking mode resumed"
                         },
                         onStop = {
                             activity.startService(WalkingSessionService.stopIntent(activity))
+                            walkingUiState = WalkingUiState(state = "Stopped")
                             status = "Walking mode stopped"
                         },
                     )
@@ -183,11 +252,20 @@ private fun FitStepApp(activity: ComponentActivity) {
                             status = directStatus
                             scope.launch {
                                 runCatching {
-                                    val writer = HealthConnectStepWriter(healthGateway.client())
-                                    val interval = planner.directInterval(steps, Instant.now())
+                                    val writer = HealthConnectStepWriter(
+                                        client = healthGateway.client(),
+                                        appPackageName = activity.packageName,
+                                    )
+                                    val allocator = StepWindowAllocator(
+                                        planner = planner,
+                                        loadCursor = { cursorStore.loadDirectCursor() },
+                                        saveCursor = { cursorStore.saveDirectCursor(it) },
+                                    )
+                                    val interval = allocator.allocatePastWindow(steps, Instant.now())
                                     writer.write(interval)
-                                    val total = writer.readTotal(interval.start, interval.end)
-                                    "Requested $steps steps; Health Connect aggregate reads $total steps in that interval"
+                                    val rawTotal = writer.readRaw(interval.start, interval.end).sumOf { it.count }
+                                    val aggregateTotal = writer.readTotal(interval.start, interval.end)
+                                    "Requested $steps steps; app raw records read $rawTotal; Health Connect aggregate reads $aggregateTotal in that non-overlapping interval"
                                 }.onFailure {
                                     val message = it.message ?: "Direct write failed"
                                     directStatus = message
@@ -255,7 +333,10 @@ private fun ModeWalkingCard(
     onStrideChange: (String) -> Unit,
     planner: StepPlanner,
     enabled: Boolean,
+    walkingUiState: WalkingUiState,
     onStart: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
     onStop: () -> Unit,
 ) {
     val preview = runCatching {
@@ -293,10 +374,30 @@ private fun ModeWalkingCard(
                 Text("Distance ${preview.distanceMeters.toLong()} m, duration ${preview.duration.toMinutes()} min")
                 preview.warnings.forEach { Text(it, color = MaterialTheme.colorScheme.error) }
             }
+            if (walkingUiState.isActive || walkingUiState.state != "Idle") {
+                LinearProgressIndicator(
+                    progress = { (walkingUiState.percent / 100f).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "${walkingUiState.state}: ${walkingUiState.writtenSteps}/${walkingUiState.targetSteps} steps (${walkingUiState.percent}%)",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = onStart, enabled = enabled) {
+                Button(onClick = onStart, enabled = enabled && !walkingUiState.isActive) {
                     Icon(Icons.Default.DirectionsWalk, contentDescription = null)
                     Text("Start")
+                }
+                if (walkingUiState.isActive && !walkingUiState.isPaused) {
+                    OutlinedButton(onClick = onPause) {
+                        Text("Pause")
+                    }
+                }
+                if (walkingUiState.isActive && walkingUiState.isPaused) {
+                    OutlinedButton(onClick = onResume) {
+                        Text("Resume")
+                    }
                 }
                 OutlinedButton(onClick = onStop) {
                     Text("Stop")
