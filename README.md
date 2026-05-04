@@ -31,3 +31,12 @@ sdk.dir=/path/to/Android/Sdk
 ## Release
 
 The workflow builds APKs for pushes and pull requests. Pushing a tag such as `v1.0.0` also uploads APK artifacts and can be used to create a GitHub release.
+
+## Google Sign-In OAuth
+
+Debug and release builds use the same package name, `com.choupeanut.fitstepcontroller`, and the GitHub release APKs use a committed test signing key so OAuth setup is stable across test releases. Register this Android OAuth client:
+
+- Package name: `com.choupeanut.fitstepcontroller`
+- SHA-1: `C0:4B:CB:08:06:37:66:4F:3B:0F:7C:B8:6C:A2:EA:01:D4:2A:B8:75`
+
+If sign-in fails, the app shows the Google Sign-In status code on screen and writes the same details to Logcat under `GoogleSignInManager`.

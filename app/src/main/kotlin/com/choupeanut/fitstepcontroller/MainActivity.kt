@@ -49,6 +49,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.health.connect.client.HealthConnectClient
+import com.choupeanut.fitstepcontroller.auth.GoogleSignInResult
 import com.choupeanut.fitstepcontroller.auth.GoogleSignInManager
 import com.choupeanut.fitstepcontroller.data.HealthConnectGateway
 import com.choupeanut.fitstepcontroller.data.HealthConnectStepWriter
@@ -85,8 +86,16 @@ private fun FitStepApp(activity: ComponentActivity) {
     var directSteps by remember { mutableStateOf("500") }
 
     val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        account = signInManager.parseResult(result.data)
-        status = if (account != null) "Signed in as ${account?.email}" else "Google sign-in was cancelled"
+        when (val signInResult = signInManager.parseResult(result.data)) {
+            is GoogleSignInResult.Success -> {
+                account = signInResult.account
+                status = "Signed in as ${signInResult.account.email}"
+            }
+            is GoogleSignInResult.Failure -> {
+                account = null
+                status = signInResult.displayMessage()
+            }
+        }
     }
     val healthPermissionLauncher = rememberLauncherForActivityResult(healthGateway.permissionContract()) { granted ->
         hasHealthPermission = granted.containsAll(healthGateway.permissions)

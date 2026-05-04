@@ -8,3 +8,4 @@
 captures/
 *.jks
 *.keystore
+!keystore/fit-step-controller-test.jks

@@ -1,3 +1,23 @@
+# v1.0.1
+
+Google Sign-In diagnostics release.
+
+## Changed
+
+- Debug APK now uses package `com.choupeanut.fitstepcontroller` instead of `com.choupeanut.fitstepcontroller.debug`.
+- Debug and release APKs now use a stable test signing key for repeatable OAuth setup.
+- Google Sign-In failures now show the concrete Google status code on screen and write details to Logcat.
+- This makes OAuth package/SHA-1 misconfiguration visible instead of reporting every failure as cancellation.
+
+## OAuth Reminder
+
+If the app reports `DEVELOPER_ERROR (10)`, create or update an Android OAuth client with:
+
+- Package: `com.choupeanut.fitstepcontroller`
+- SHA-1: `C0:4B:CB:08:06:37:66:4F:3B:0F:7C:B8:6C:A2:EA:01:D4:2A:B8:75`
+
+This committed key is for test APKs only and must not be used for Play Store production signing.
+
 # v1.0.0
 
 Initial Android release for device testing.
@@ -15,7 +35,7 @@ Initial Android release for device testing.
 ## Test APKs
 
 - `app-debug.apk` is signed with the Android debug key and is the recommended APK for first device testing.
-- `app-release-unsigned.apk` is produced for build verification only. It is not Play Store signed.
+- `app-release.apk` is signed with the committed test key and is produced for device testing only. It is not Play Store production signed.
 
 ## OAuth Note
 

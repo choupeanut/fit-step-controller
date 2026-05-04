@@ -11,8 +11,8 @@ android {
         applicationId = "com.choupeanut.fitstepcontroller"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -20,13 +20,23 @@ android {
         }
     }
 
+    signingConfigs {
+        create("testApk") {
+            storeFile = rootProject.file("keystore/fit-step-controller-test.jks")
+            storePassword = "fitstepcontroller"
+            keyAlias = "fit-step-controller-test"
+            keyPassword = "fitstepcontroller"
+        }
+    }
+
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            signingConfig = signingConfigs.getByName("testApk")
         }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("testApk")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
