@@ -39,6 +39,12 @@ data class PersistedWalkingSession(
     val lastTickAt: Instant?,
     val startedAt: Instant,
     val error: String?,
+    /** Timestamp of the current cadence window; unlike lastTickAt it is not moved every tick. */
+    val cadenceStartedAt: Instant? = null,
+    /** Fractional steps accumulated since the last confirmed chunk. */
+    val accruedSteps: Double = 0.0,
+    /** Active (non-paused) elapsed time used for the five-hour session cap. */
+    val activeElapsedMillis: Long = 0L,
 )
 
 /**
@@ -83,6 +89,9 @@ class WalkingSessionController(
             lastTickAt = startedAt,
             startedAt = startedAt,
             error = null,
+            cadenceStartedAt = startedAt,
+            accruedSteps = 0.0,
+            activeElapsedMillis = 0L,
         )
         lastInterval = null
         persist()
@@ -94,7 +103,15 @@ class WalkingSessionController(
         val restored = store.load() ?: return null
         val restoredAt = now()
         session = if (restored.state == WalkingSessionState.RUNNING && restored.pendingChunk == null) {
-            restored.copy(lastTickAt = restoredAt)
+            // The process may have been recreated while a sub-minute cadence was
+            // pending. Discard that partial cadence rather than attaching its old
+            // steps to a new interval; this keeps the persisted interval density
+            // honest and never turns process downtime into synthetic activity.
+            restored.copy(
+                lastTickAt = restoredAt,
+                cadenceStartedAt = restoredAt,
+                accruedSteps = 0.0,
+            )
         } else {
             restored
         }
@@ -114,33 +131,79 @@ class WalkingSessionController(
         }
 
         val tickAt = now()
-        val cursor = current.lastTickAt ?: current.startedAt
-        val elapsedMillis = Duration.between(cursor, tickAt).toMillis()
-        if (elapsedMillis < chunkDuration.toMillis()) return snapshot()
+        val progressed = accrue(current, tickAt)
+        val cadenceStart = progressed.cadenceStartedAt ?: progressed.lastTickAt ?: progressed.startedAt
+        val elapsedMillis = Duration.between(cadenceStart, tickAt).toMillis()
+        if (elapsedMillis < chunkDuration.toMillis()) {
+            session = progressed
+            persist()
+            return snapshot()
+        }
 
-        val chunkMillis = min(elapsedMillis, chunkDuration.toMillis())
-        val end = cursor.plusMillis(chunkMillis)
-        val remaining = current.plan.targetSteps - current.confirmedSteps
+        val remaining = progressed.plan.targetSteps - progressed.confirmedSteps
         val count = min(
             remaining,
-            max(1L, (current.plan.stepsPerSecond * chunkMillis / 1_000.0).roundToLong()),
+            max(1L, progressed.accruedSteps.roundToLong()),
         )
         val chunkIndex = current.nextChunkIndex
         val chunk = PendingWalkingChunk(
             chunkIndex = chunkIndex,
             clientRecordId = "${current.sessionId}:$chunkIndex",
-            interval = StepWriteInterval(start = cursor, end = end, count = count),
+            interval = StepWriteInterval(start = cadenceStart, end = tickAt, count = count),
         )
-        session = current.copy(pendingChunk = chunk)
+        session = progressed.copy(
+            pendingChunk = chunk,
+            cadenceStartedAt = tickAt,
+            accruedSteps = (progressed.accruedSteps - count).coerceAtLeast(0.0),
+        )
         pendingWasRestored = false
         persist()
         return writePending(chunk)
     }
 
+    /**
+     * Applies a new speed without retroactively changing the interval already
+     * accumulated at the previous speed. The caller can use the returned snapshot
+     * to update the live ETA immediately.
+     */
+    fun updateSpeed(speedKmh: Double): WalkingSessionSnapshot {
+        val current = requireSession()
+        val retimed = planner.updateSpeed(current.plan, speedKmh)
+        val progressed = if (current.state == WalkingSessionState.RUNNING) {
+            accrue(current, now()).also {
+                session = it
+            }
+        } else {
+            current
+        }
+        val remainingSteps = (
+            progressed.plan.targetSteps - progressed.confirmedSteps - progressed.accruedSteps
+        ).coerceAtLeast(0.0)
+        val remainingMillis = (remainingSteps / retimed.stepsPerSecond * 1_000.0)
+            .roundToLong()
+            .coerceAtLeast(0L)
+        require(progressed.activeElapsedMillis + remainingMillis <= MAX_SESSION_DURATION.toMillis()) {
+            "Speed would exceed the five-hour walking session limit"
+        }
+        session = progressed.copy(plan = retimed)
+        persist()
+        return snapshot()
+    }
+
     fun pause(): WalkingSessionSnapshot {
         val current = requireSession()
         if (current.state == WalkingSessionState.RUNNING) {
-            session = current.copy(state = WalkingSessionState.PAUSED, error = null)
+            val pausedAt = now()
+            val progressed = accrue(current, pausedAt)
+            session = progressed.copy(
+                state = WalkingSessionState.PAUSED,
+                // A paused session deliberately discards an incomplete cadence
+                // interval; no paused downtime is ever backfilled on resume.
+                accruedSteps = if (progressed.pendingChunk == null) 0.0 else progressed.accruedSteps,
+                cadenceStartedAt = pausedAt,
+                lastTickAt = pausedAt,
+                error = null,
+            )
             persist()
         }
         return snapshot()
@@ -150,7 +213,14 @@ class WalkingSessionController(
         val current = requireSession()
         if (current.state == WalkingSessionState.PAUSED) {
             // Reset the cursor so time spent paused cannot become a synthetic chunk.
-            session = current.copy(state = WalkingSessionState.RUNNING, lastTickAt = now(), error = null)
+            val resumedAt = now()
+            session = current.copy(
+                state = WalkingSessionState.RUNNING,
+                lastTickAt = resumedAt,
+                cadenceStartedAt = resumedAt,
+                accruedSteps = 0.0,
+                error = null,
+            )
             persist()
         }
         return snapshot()
@@ -198,6 +268,7 @@ class WalkingSessionController(
                     lastConfirmedAt = confirmedAt,
                     // A restored pending chunk may be hours old. The cursor must remain now.
                     lastTickAt = nextCursor,
+                    cadenceStartedAt = confirmedAt,
                     error = null,
                 )
                 lastInterval = pending.interval
@@ -220,6 +291,19 @@ class WalkingSessionController(
 
     private fun requireSession(): PersistedWalkingSession = session ?: error("Session has not started")
 
+    /** Advances fractional steps and active time up to [at] using the current speed. */
+    private fun accrue(current: PersistedWalkingSession, at: Instant): PersistedWalkingSession {
+        val cursor = current.lastTickAt ?: current.cadenceStartedAt ?: current.startedAt
+        val elapsedMillis = Duration.between(cursor, at).toMillis().coerceAtLeast(0L)
+        if (elapsedMillis == 0L) return current
+        val generated = current.accruedSteps + current.plan.stepsPerSecond * elapsedMillis / 1_000.0
+        return current.copy(
+            lastTickAt = at,
+            accruedSteps = generated,
+            activeElapsedMillis = current.activeElapsedMillis + elapsedMillis,
+        )
+    }
+
     private fun persist() {
         session?.let(store::save)
     }
@@ -239,7 +323,25 @@ class WalkingSessionController(
             nextChunkIndex = current.nextChunkIndex,
             lastConfirmedAt = current.lastConfirmedAt,
             error = current.error,
+            currentSpeedKmh = current.plan.speedKmh,
+            accruedSteps = current.accruedSteps,
+            estimatedRemainingMillis = estimateRemainingMillis(current),
+            estimatedEndAt = estimateEndAt(current),
         )
+    }
+
+    private fun estimateRemainingMillis(current: PersistedWalkingSession): Long {
+        val remaining = (
+            current.plan.targetSteps - current.confirmedSteps - current.accruedSteps
+        ).coerceAtLeast(0.0)
+        return (remaining / current.plan.stepsPerSecond * 1_000.0)
+            .roundToLong()
+            .coerceAtLeast(0L)
+    }
+
+    private fun estimateEndAt(current: PersistedWalkingSession): Instant? {
+        if (current.state != WalkingSessionState.RUNNING) return null
+        return now().plusMillis(estimateRemainingMillis(current))
     }
 
     companion object {
@@ -260,4 +362,8 @@ data class WalkingSessionSnapshot(
     val nextChunkIndex: Long = 0,
     val lastConfirmedAt: Instant? = null,
     val error: String? = null,
+    val currentSpeedKmh: Double = plan.speedKmh,
+    val accruedSteps: Double = 0.0,
+    val estimatedRemainingMillis: Long = 0L,
+    val estimatedEndAt: Instant? = null,
 )

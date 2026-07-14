@@ -111,6 +111,30 @@ class WalkingSessionPersistenceTest {
     }
 
     @Test
+    fun restoreDiscardsPartialCadenceAndDoesNotBackfillDowntime() = runTest {
+        var current = epoch
+        val store = InMemoryWalkingSessionStore()
+        val writer = RecordingWriter()
+        val controller = controller(writer, store) { current }
+        controller.start(WalkingPlanInput(6.0, 1_000, 0.75))
+
+        current = epoch.plusSeconds(30)
+        val beforeRestart = controller.tick()
+        val accruedBeforeRestart = beforeRestart.accruedSteps
+        assertThat(accruedBeforeRestart).isGreaterThan(0.0)
+
+        current = epoch.plusSeconds(3_600)
+        val restoredController = controller(writer, store) { current }
+        val restored = restoredController.restore()!!
+        assertThat(restored.accruedSteps).isEqualTo(0.0)
+
+        current = current.plusSeconds(30)
+        val afterRestart = restoredController.tick()
+        assertThat(writer.requests).isEmpty()
+        assertThat(afterRestart.accruedSteps).isWithin(0.01).of(6.0 / 3.6 / 0.75 * 30.0)
+    }
+
+    @Test
     fun failedRetriesPersistFailedStateAndDoNotAdvanceConfirmedSteps() = runTest {
         var current = epoch
         val store = InMemoryWalkingSessionStore()

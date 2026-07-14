@@ -51,6 +51,7 @@ class WalkingSessionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> startSession(intent, startId)
+            ACTION_UPDATE_SPEED -> updateSpeed(intent, startId)
             ACTION_PAUSE -> pauseSession(startId)
             ACTION_RESUME -> resumeSession(startId)
             ACTION_STOP -> stopSession(startId)
@@ -192,6 +193,30 @@ class WalkingSessionService : Service() {
         }
     }
 
+    private fun updateSpeed(intent: Intent, startId: Int) {
+        val speed = intent.getDoubleExtra(EXTRA_SPEED_KMH, Double.NaN)
+        enqueueCommand {
+            try {
+                require(speed.isFinite()) { "Speed must be a finite number" }
+                val updated = sessionMutex.withLock {
+                    restoreControllerIfNeeded()
+                    requireController().updateSpeed(speed)
+                }
+                publishProgress(updated)
+            } catch (cancelled: CancellationException) {
+                return@enqueueCommand
+            } catch (failure: Throwable) {
+                // A rejected speed (for example one that would exceed the five-hour
+                // cap) must not fail the active session; leave the prior speed intact.
+                publishError(failure.message ?: "Unable to update walking speed")
+            } finally {
+                // ACTION_UPDATE_SPEED is normally sent while the loop is already
+                // active. If no session exists, do not keep a foreground service alive.
+                if (sessionStore.load() == null) stopSelf(startId)
+            }
+        }
+    }
+
     private fun pauseSession(startId: Int) {
         // Cancel first, then join under the same mutex used by tick(). This prevents
         // an in-flight write from persisting RUNNING after PAUSED was saved.
@@ -306,7 +331,10 @@ class WalkingSessionService : Service() {
         val state = snapshot.state.name.replace('_', ' ')
         getSystemService(NotificationManager::class.java).notify(
             NOTIFICATION_ID,
-            notification("$state: ${snapshot.confirmedSteps}/$target steps ($percent%)"),
+            notification(
+                "$state: ${snapshot.confirmedSteps}/$target steps ($percent%) · " +
+                    "${"%.1f".format(snapshot.currentSpeedKmh)} km/h"
+            ),
         )
         sendBroadcast(
             Intent(ACTION_PROGRESS).apply {
@@ -318,8 +346,49 @@ class WalkingSessionService : Service() {
                 putExtra(EXTRA_PAUSED, snapshot.state == WalkingSessionState.PAUSED)
                 putExtra(EXTRA_SESSION_ID, snapshot.sessionId)
                 putExtra(EXTRA_ERROR, snapshot.error)
+                putExtra(EXTRA_CURRENT_SPEED_KMH, snapshot.currentSpeedKmh)
+                putExtra(EXTRA_REMAINING_MILLIS, snapshot.estimatedRemainingMillis)
+                putExtra(EXTRA_ESTIMATED_END_AT, snapshot.estimatedEndAt?.toEpochMilli() ?: -1L)
             }
         )
+    }
+
+    private fun publishError(message: String) {
+        val current = sessionStore.load()
+        if (current == null) {
+            getSystemService(NotificationManager::class.java).notify(
+                NOTIFICATION_ID,
+                notification("Failed: $message"),
+            )
+            return
+        }
+        val remainingSteps = (
+            current.plan.targetSteps - current.confirmedSteps - current.accruedSteps
+        ).coerceAtLeast(0.0)
+        val remainingMillis = (remainingSteps / current.plan.stepsPerSecond * 1_000.0)
+            .toLong()
+            .coerceAtLeast(0L)
+        val estimatedEnd = if (current.state == WalkingSessionState.RUNNING) {
+            java.time.Instant.now().plusMillis(remainingMillis)
+        } else {
+            null
+        }
+        val snapshot = WalkingSessionSnapshot(
+            plan = current.plan,
+            writtenSteps = current.confirmedSteps,
+            isComplete = current.state == WalkingSessionState.COMPLETED,
+            lastInterval = null,
+            sessionId = current.sessionId,
+            state = current.state,
+            confirmedSteps = current.confirmedSteps,
+            nextChunkIndex = current.nextChunkIndex,
+            error = message,
+            currentSpeedKmh = current.plan.speedKmh,
+            accruedSteps = current.accruedSteps,
+            estimatedRemainingMillis = remainingMillis,
+            estimatedEndAt = estimatedEnd,
+        )
+        publishProgress(snapshot)
     }
 
     private fun updateCpuWakeLock(state: WalkingSessionState) {
@@ -375,6 +444,7 @@ class WalkingSessionService : Service() {
         private const val CHANNEL_ID = "walking-session"
         private const val NOTIFICATION_ID = 1001
         private const val ACTION_START = "com.choupeanut.fitstepcontroller.START_WALKING"
+        private const val ACTION_UPDATE_SPEED = "com.choupeanut.fitstepcontroller.UPDATE_WALKING_SPEED"
         private const val ACTION_PAUSE = "com.choupeanut.fitstepcontroller.PAUSE_WALKING"
         private const val ACTION_RESUME = "com.choupeanut.fitstepcontroller.RESUME_WALKING"
         private const val ACTION_STOP = "com.choupeanut.fitstepcontroller.STOP_WALKING"
@@ -391,6 +461,9 @@ class WalkingSessionService : Service() {
         const val EXTRA_PAUSED = "paused"
         const val EXTRA_SESSION_ID = "sessionId"
         const val EXTRA_ERROR = "error"
+        const val EXTRA_CURRENT_SPEED_KMH = "currentSpeedKmh"
+        const val EXTRA_REMAINING_MILLIS = "remainingMillis"
+        const val EXTRA_ESTIMATED_END_AT = "estimatedEndAt"
 
         fun startIntent(context: Context, speedKmh: Double, targetSteps: Long, strideMeters: Double): Intent {
             return Intent(context, WalkingSessionService::class.java).apply {
@@ -404,6 +477,13 @@ class WalkingSessionService : Service() {
         fun stopIntent(context: Context): Intent {
             return Intent(context, WalkingSessionService::class.java).apply {
                 action = ACTION_STOP
+            }
+        }
+
+        fun updateSpeedIntent(context: Context, speedKmh: Double): Intent {
+            return Intent(context, WalkingSessionService::class.java).apply {
+                action = ACTION_UPDATE_SPEED
+                putExtra(EXTRA_SPEED_KMH, speedKmh)
             }
         }
 

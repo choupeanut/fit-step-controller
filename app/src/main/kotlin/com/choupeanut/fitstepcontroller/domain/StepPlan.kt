@@ -64,6 +64,22 @@ class StepPlanner(
         )
     }
 
+    /**
+     * Recalculates the pacing fields for an existing plan while keeping its target
+     * and stride fixed.  Mode 1 uses this when the user changes the speed while a
+     * session is running; already elapsed time is accounted for by the controller
+     * before this method is called.
+     */
+    fun updateSpeed(plan: WalkingPlan, speedKmh: Double): WalkingPlan {
+        return createWalkingPlan(
+            WalkingPlanInput(
+                speedKmh = speedKmh,
+                targetSteps = plan.targetSteps,
+                strideMeters = plan.strideMeters,
+            )
+        )
+    }
+
     fun directInterval(steps: Long, endingAt: Instant = clock()): StepWriteInterval {
         require(steps > 0) { "steps must be positive" }
         val seconds = ceil(steps / DIRECT_WRITE_STEPS_PER_SECOND).toLong().coerceAtLeast(1)

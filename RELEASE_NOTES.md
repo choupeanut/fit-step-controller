@@ -1,3 +1,16 @@
+# v1.0.6
+
+Availability-aware backfill and live pacing controls.
+
+## Added
+
+- Mode 2 scans all granted Health Connect step sources for empty local 12:00-to-now windows, shows a theoretical `10 km/h + 0.35 m` capacity, and fills requested steps oldest-first with re-scans and idempotent record IDs.
+- Mode 1 shows remaining duration and estimated finish time, and applies speed-slider changes live while preserving the old rate for already elapsed time.
+
+## Limits
+
+- Empty windows mean no `StepsRecord` was found; they do not prove the user was physically inactive. Health Connect/Google Fit source priority can still change displayed aggregates.
+
 # v1.0.5
 
 Cat-paw branding and resilient background pacing.

@@ -88,6 +88,9 @@ class SharedPreferencesWalkingSessionStore(
             lastTickAt = preferences.getString(KEY_LAST_TICK_AT, null)?.let(Instant::parse),
             startedAt = Instant.parse(preferences.getString(KEY_STARTED_AT, null)),
             error = preferences.getString(KEY_ERROR, null),
+            cadenceStartedAt = preferences.getString(KEY_CADENCE_STARTED_AT, null)?.let(Instant::parse),
+            accruedSteps = preferences.getLong(KEY_ACCRUED_STEPS, 0L).let(Double::fromBits),
+            activeElapsedMillis = preferences.getLong(KEY_ACTIVE_ELAPSED_MILLIS, 0L),
         )
     }
 
@@ -103,6 +106,9 @@ class SharedPreferencesWalkingSessionStore(
             .putString(KEY_LAST_TICK_AT, session.lastTickAt?.toString())
             .putString(KEY_STARTED_AT, session.startedAt.toString())
             .putString(KEY_ERROR, session.error)
+            .putString(KEY_CADENCE_STARTED_AT, session.cadenceStartedAt?.toString())
+            .putLong(KEY_ACCRUED_STEPS, session.accruedSteps.toBits())
+            .putLong(KEY_ACTIVE_ELAPSED_MILLIS, session.activeElapsedMillis)
             .putLong(KEY_TARGET_STEPS, session.plan.targetSteps)
             .putFloat(KEY_SPEED_KMH, session.plan.speedKmh.toFloat())
             .putFloat(KEY_STRIDE_METERS, session.plan.strideMeters.toFloat())
@@ -137,6 +143,9 @@ class SharedPreferencesWalkingSessionStore(
         const val KEY_LAST_TICK_AT = "lastTickAt"
         const val KEY_STARTED_AT = "startedAt"
         const val KEY_ERROR = "error"
+        const val KEY_CADENCE_STARTED_AT = "cadenceStartedAt"
+        const val KEY_ACCRUED_STEPS = "accruedSteps"
+        const val KEY_ACTIVE_ELAPSED_MILLIS = "activeElapsedMillis"
         const val KEY_TARGET_STEPS = "targetSteps"
         const val KEY_SPEED_KMH = "speedKmh"
         const val KEY_STRIDE_METERS = "strideMeters"
