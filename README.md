@@ -6,6 +6,7 @@ Modern Android step-entry test app built with Kotlin, Jetpack Compose, and Healt
 
 - Mode 1: paced walking from 3 km/h to 12 km/h with a step target and automatic stop.
 - Mode 2: direct step entry that writes a realistic non-zero time interval immediately.
+- Mode 1 continues from a foreground service after the app is backgrounded or its task is removed, with persisted recovery and a bounded CPU wake lock while running.
 - Health Connect read/write permission flow and exact app-record read-back verification.
 - GitHub Actions APK build and release workflow for `v*` tags.
 
@@ -44,3 +45,4 @@ This app does not use the deprecated Google Fit Fitness API. To display records 
 3. Start paced mode with a short target (for example, `1000` steps), wait through the first 60-second cadence, and confirm progress increases only after a verified chunk. Pause for more than 60 seconds, resume, and verify that paused time is not written. Stop, relaunch the app, and confirm the persisted state is restored or safely stopped according to the last action.
 4. During a provider interruption or revoked permission, confirm the notification/UI reports failure, confirmed steps do not advance, and the pending chunk retains the same client ID for retry. Restore permission and resume to verify recovery without duplicate records.
 5. On Android 15, inspect the foreground-service notification and logcat around service recreation and `dataSync` timeout handling. A timeout must persist a failure state and stop the service instead of silently claiming additional steps.
+6. For long background runs, set the app battery usage to unrestricted on devices with aggressive vendor power management. Android can still interrupt work after a user force-stops the app or when its foreground-service policy limit is reached.

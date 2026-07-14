@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.health.connect.client.HealthConnectClient
 import com.choupeanut.fitstepcontroller.R
@@ -39,6 +40,7 @@ class WalkingSessionService : Service() {
     private val sessionMutex = Mutex()
     /** Preserves the order of lifecycle commands received by onStartCommand. */
     private var commandTail: Job? = null
+    private var cpuWakeLock: PowerManager.WakeLock? = null
 
     private val sessionStore by lazy { SharedPreferencesWalkingSessionStore(this) }
 
@@ -59,6 +61,7 @@ class WalkingSessionService : Service() {
 
     override fun onDestroy() {
         job?.cancel()
+        releaseCpuWakeLock()
         scope.cancel()
         super.onDestroy()
     }
@@ -73,6 +76,7 @@ class WalkingSessionService : Service() {
             } catch (_: CancellationException) {
                 return@enqueueCommand
             } finally {
+                releaseCpuWakeLock()
                 stopSelf(startId)
             }
         }
@@ -182,6 +186,7 @@ class WalkingSessionService : Service() {
             } catch (failure: Throwable) {
                 failAndPublish(failure.message ?: "Unable to stop walking session")
             } finally {
+                releaseCpuWakeLock()
                 stopSelf(startId)
             }
         }
@@ -205,6 +210,7 @@ class WalkingSessionService : Service() {
                 failAndPublish(failure.message ?: "Unable to pause walking session")
             } finally {
                 // A paused session is durable and can be resumed by a new foreground start.
+                releaseCpuWakeLock()
                 stopSelf(startId)
             }
         }
@@ -223,6 +229,7 @@ class WalkingSessionService : Service() {
                     return@launch
                 } catch (failure: Throwable) {
                     failAndPublish(failure.message ?: "Walking session failed")
+                    releaseCpuWakeLock()
                     stopSelf(startId)
                     return@launch
                 }
@@ -230,6 +237,7 @@ class WalkingSessionService : Service() {
                     snapshot.state == WalkingSessionState.FAILED ||
                     snapshot.state == WalkingSessionState.STOPPED
                 ) {
+                    releaseCpuWakeLock()
                     stopSelf(startId)
                     return@launch
                 }
@@ -292,6 +300,7 @@ class WalkingSessionService : Service() {
     }
 
     private fun publishProgress(snapshot: WalkingSessionSnapshot) {
+        updateCpuWakeLock(snapshot.state)
         val target = snapshot.plan.targetSteps
         val percent = (snapshot.confirmedSteps * 100 / target).coerceIn(0, 100)
         val state = snapshot.state.name.replace('_', ' ')
@@ -313,11 +322,42 @@ class WalkingSessionService : Service() {
         )
     }
 
+    private fun updateCpuWakeLock(state: WalkingSessionState) {
+        if (WalkingSessionBackgroundPolicy.requiresCpuWakeLock(state)) {
+            acquireCpuWakeLock()
+        } else {
+            releaseCpuWakeLock()
+        }
+    }
+
+    private fun acquireCpuWakeLock() {
+        val powerManager = getSystemService(PowerManager::class.java)
+        val lock = cpuWakeLock ?: powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "$packageName:walking-session",
+        ).apply {
+            setReferenceCounted(false)
+        }.also { cpuWakeLock = it }
+        if (!lock.isHeld) {
+            // A paced plan is capped at five hours. The timeout is a final leak guard;
+            // normal completion, pause, stop, failure, and service destruction release it.
+            lock.acquire(WAKE_LOCK_TIMEOUT_MILLIS)
+        }
+    }
+
+    private fun releaseCpuWakeLock() {
+        cpuWakeLock?.let { lock ->
+            if (lock.isHeld) lock.release()
+        }
+    }
+
     private fun notification(text: String): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
             .build()
     }
@@ -342,6 +382,7 @@ class WalkingSessionService : Service() {
         const val EXTRA_TARGET_STEPS = "targetSteps"
         private const val EXTRA_STRIDE_METERS = "strideMeters"
         private const val TICK_INTERVAL_MILLIS = 1_000L
+        private const val WAKE_LOCK_TIMEOUT_MILLIS = 5 * 60 * 60 * 1_000L + 60_000L
 
         const val ACTION_PROGRESS = "com.choupeanut.fitstepcontroller.WALKING_PROGRESS"
         const val EXTRA_STATE = "state"

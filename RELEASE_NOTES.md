@@ -1,3 +1,16 @@
+# v1.0.5
+
+Cat-paw branding and resilient background pacing.
+
+## Fixed
+
+- Mode 1 now keeps the CPU awake with a bounded partial wake lock while its persistent `dataSync` foreground service is running, continues after the app task is removed, and restores a sticky session after service recreation.
+- Launcher and round icons now use the friendly “活力步步” cat-paw mark.
+
+## Limits
+
+- Android battery managers, user force-stop, and the Android 15 `dataSync` foreground-service limit can still stop work; paced sessions remain capped at five hours.
+
 # v1.0.4
 
 Health Connect write verification and session recovery.

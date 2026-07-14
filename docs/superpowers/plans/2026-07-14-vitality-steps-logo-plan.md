@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- The icon must use the approved “活力步步” concept: two ascending rounded footprints plus a blue motion dot.
+- The icon must use the approved “活力步步” concept: two ascending cat paws, each with one pad and four toe beans, plus a blue motion dot.
 - Colors are fixed to coral `#FF6B6B`, mint `#4FD1B5`, sky `#5BA7FF`, and warm cream `#FFF7F2`.
 - No text, external assets, fonts, network calls, or runtime code changes are allowed for the icon.
 - Preserve `android:icon="@mipmap/ic_launcher"`, `android:roundIcon="@mipmap/ic_launcher_round"`, application label, package name, and all Health Connect behavior.
