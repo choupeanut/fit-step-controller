@@ -13,8 +13,10 @@ import java.time.ZoneId
 class HealthConnectStepWriter(
     private val client: HealthConnectClient,
     private val zoneId: ZoneId = ZoneId.systemDefault(),
-    private val appPackageName: String? = null,
+    appPackageName: String? = null,
 ) : StepWriter {
+    private val appPackageName: String = requireAppPackageName(appPackageName)
+
     override suspend fun writeAndVerify(request: StepWriteRequest): VerifiedStepWrite {
         val interval = request.interval
         require(interval.count > 0) { "count must be positive" }
@@ -68,7 +70,7 @@ class HealthConnectStepWriter(
             ReadRecordsRequest(
                 recordType = StepsRecord::class,
                 timeRangeFilter = TimeRangeFilter.between(start, end),
-                dataOriginFilter = appPackageName?.let { setOf(DataOrigin(it)) } ?: emptySet(),
+                dataOriginFilter = setOf(DataOrigin(appPackageName)),
             )
         ).records
     }
@@ -103,5 +105,14 @@ class HealthConnectStepWriter(
             platformRecordId = platformRecordId ?: exact.metadata.id,
             wasAlreadyPresent = wasAlreadyPresent,
         )
+    }
+
+    companion object {
+        internal fun requireAppPackageName(appPackageName: String?): String {
+            require(!appPackageName.isNullOrBlank()) {
+                "appPackageName is required to scope Health Connect records to this app"
+            }
+            return appPackageName
+        }
     }
 }

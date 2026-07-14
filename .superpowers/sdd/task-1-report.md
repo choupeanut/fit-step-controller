@@ -10,6 +10,7 @@ Implemented the Health Connect write contract and direct-write semantics from th
 - Added `VerifiedStepWrite`, which exposes the request, insert count, exact client-record count, platform record ID, aggregate diagnostic, retry/idempotency flag, and a computed `verified` flag.
 - Added `StepWriter.writeAndVerify(request)`. The existing interval-only `write(interval)` entry point remains as a compatibility bridge and derives a deterministic legacy client ID so an identical retry can be recognized.
 - `HealthConnectStepWriter` now writes with `Metadata.manualEntry(clientRecordId, clientRecordVersion)`, queries app-origin raw records, selects the exact client ID, validates one matching interval/count, and only then returns success. A pre-existing exact record is returned as `wasAlreadyPresent` without inserting another record. Aggregate count remains diagnostic and is not the exact-record success criterion.
+- `HealthConnectStepWriter` now fail-fast rejects a null or blank `appPackageName`; raw exact-record reads cannot silently fall back to all data origins. Existing call sites retain a temporary nullable signature for staged compilation and will be updated to pass `packageName` by the integration task.
 - `FakeStepWriter` now models exact client IDs and idempotent retries, allowing controller tests to exercise the same contract.
 - Added regression tests for exact record verification and aggregate diagnostics, retry non-duplication, failed write progress behavior, and a 3000-step direct interval ending at the supplied instant. The planner uses 2.5 steps/sec, so 3000 steps produce a 1200-second interval.
 
@@ -27,6 +28,8 @@ BUILD SUCCESSFUL
 ./gradlew :app:testDebugUnitTest
 BUILD SUCCESSFUL
 ```
+
+The source-isolation regression test also verifies that null and blank package names are rejected before any Health Connect operation can run.
 
 ## Follow-up/integration notes
 

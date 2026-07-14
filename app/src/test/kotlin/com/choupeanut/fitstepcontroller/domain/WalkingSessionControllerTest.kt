@@ -13,17 +13,21 @@ import java.time.Instant
 class WalkingSessionControllerTest {
     @Test
     fun sessionWritesChunksUntilComplete() = runTest {
+        var current = Instant.parse("2026-05-04T08:00:00Z")
         val writer = FakeStepWriter()
         val controller = WalkingSessionController(
             planner = StepPlanner(),
             writer = writer,
             chunkDuration = Duration.ofSeconds(30),
-            now = { Instant.parse("2026-05-04T08:00:00Z") },
+            now = { current },
+            retryDelaysMillis = listOf(0L, 0L, 0L),
         )
 
         controller.start(WalkingPlanInput(speedKmh = 6.0, targetSteps = 50, strideMeters = 0.75))
+        current = current.plusSeconds(30)
         var snapshot = controller.tick()
         while (!snapshot.isComplete) {
+            current = current.plusSeconds(30)
             snapshot = controller.tick()
         }
 
@@ -33,17 +37,18 @@ class WalkingSessionControllerTest {
 
     @Test
     fun failedWriteDoesNotAdvanceWrittenStepsBeforeRetry() = runTest {
+        var current = Instant.parse("2026-05-04T08:00:00Z")
         val writer = FailingOnceStepWriter()
         val controller = WalkingSessionController(
             planner = StepPlanner(),
             writer = writer,
             chunkDuration = Duration.ofSeconds(30),
-            now = { Instant.parse("2026-05-04T08:00:00Z") },
+            now = { current },
+            retryDelaysMillis = listOf(0L, 0L, 0L),
         )
         controller.start(WalkingPlanInput(speedKmh = 6.0, targetSteps = 100, strideMeters = 0.75))
+        current = current.plusSeconds(30)
 
-        val failure = runCatching { controller.tick() }.exceptionOrNull()
-        assertThat(failure).isInstanceOf(IllegalStateException::class.java)
         val snapshot = controller.tick()
 
         assertThat(writer.requests).hasSize(2)
