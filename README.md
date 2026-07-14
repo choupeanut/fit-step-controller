@@ -36,3 +36,11 @@ The workflow builds APKs for pushes and pull requests. Pushing a tag such as `v1
 ## Google Fit display
 
 This app does not use the deprecated Google Fit Fitness API. To display records in Google Fit, enable Google Fit's Health Connect sync and grant Google Fit access to steps in Health Connect. Health Connect may deduplicate overlapping Activity records according to the user's source priority, so Google Fit's aggregate can differ from this app's exact record count.
+
+## Manual validation on Android 14/15
+
+1. Grant this app Health Connect read/write access to steps. In the direct-entry mode, write `3000` steps and confirm in Health Connect that one exact record from this app contains `3000` steps and ends at the current time. The app's success message is based on this raw record, not on Google Fit's aggregate.
+2. Enable Google Fit's Health Connect sync if its dashboard is part of the test. Allow for sync delay and compare the display only as a diagnostic; source priority or deduplication can make its total differ.
+3. Start paced mode with a short target (for example, `1000` steps), wait through the first 60-second cadence, and confirm progress increases only after a verified chunk. Pause for more than 60 seconds, resume, and verify that paused time is not written. Stop, relaunch the app, and confirm the persisted state is restored or safely stopped according to the last action.
+4. During a provider interruption or revoked permission, confirm the notification/UI reports failure, confirmed steps do not advance, and the pending chunk retains the same client ID for retry. Restore permission and resume to verify recovery without duplicate records.
+5. On Android 15, inspect the foreground-service notification and logcat around service recreation and `dataSync` timeout handling. A timeout must persist a failure state and stop the service instead of silently claiming additional steps.
