@@ -1,5 +1,6 @@
 package com.choupeanut.fitstepcontroller.data
 
+import android.annotation.SuppressLint
 import android.content.Context
 import com.choupeanut.fitstepcontroller.domain.PendingWalkingChunk
 import com.choupeanut.fitstepcontroller.domain.PersistedWalkingSession
@@ -121,6 +122,7 @@ class SharedPreferencesWalkingSessionStore(
         check(editor.commit()) { "Unable to persist walking session" }
     }
 
+    @SuppressLint("ApplySharedPref")
     override fun clear() {
         preferences.edit().clear().commit()
     }
