@@ -13,7 +13,7 @@ Modern Android step-entry test app built with Kotlin, Jetpack Compose, and Healt
 
 The app writes manually entered `StepsRecord` entries to Health Connect. Google Fit can display those records only when the user enables Google Fit's Health Connect sync on the Android device. The app treats its own exact Health Connect record as the write success boundary; Google Fit's displayed total is a separate, source-prioritized aggregate.
 
-Health Connect and Google Fit do not treat displayed step count as a raw append-only counter. Both systems merge step data from multiple sources, avoid duplicate activity intervals, and may show a delayed or estimated total. To reduce avoidable loss during repeated manual writes, direct step entry stores each submission in a non-overlapping historical time window and reports both this app's raw records and Health Connect's aggregate for that interval.
+Health Connect and Google Fit do not treat displayed step count as a raw append-only counter. Both systems merge step data from multiple sources, avoid duplicate activity intervals, and may show a delayed or estimated total. Direct step entry stores each submission in a realistic interval ending at the current time and reports both this app's exact raw record and Health Connect's aggregate diagnostic for that interval.
 
 This project intentionally does not implement game-specific automation, anti-detection behavior, or claims about third-party app reward systems.
 

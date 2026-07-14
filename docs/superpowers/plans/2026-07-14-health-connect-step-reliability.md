@@ -24,7 +24,7 @@
 
 ### Task 2: Walking session persistence and service execution
    - Modify `domain/WalkingSessionController.kt`, `service/WalkingSessionService.kt`; add `data/WalkingSessionStore.kt` and focused tests.
-   - Persist pending/confirmed chunks, use a 60-second cadence, retry transient provider failures three times, and restore without backfilling downtime.
+   - Persist pending/confirmed chunks, use a 60-second cadence, retry transient provider failures for at most three total attempts (two retries), and restore without backfilling downtime.
    - Add `onTimeout()` handling and a five-hour plan guard.
 
 ### Task 3: Application integration and platform configuration

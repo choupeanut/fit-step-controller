@@ -7,6 +7,7 @@ import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import kotlinx.coroutines.CancellationException
 import java.time.Instant
 import java.time.ZoneId
 
@@ -101,7 +102,11 @@ class HealthConnectStepWriter(
             request = request,
             recordsWritten = recordsWritten,
             exactRecordCount = exact.count,
-            aggregateSteps = readTotal(request.interval.start, request.interval.end),
+            // Aggregate is source-prioritized diagnostic data. If this separate IPC
+            // read is unavailable, the exact record is still a verified write.
+            aggregateSteps = readAggregateOrNull {
+                readTotal(request.interval.start, request.interval.end)
+            },
             platformRecordId = platformRecordId ?: exact.metadata.id,
             wasAlreadyPresent = wasAlreadyPresent,
         )
@@ -113,6 +118,16 @@ class HealthConnectStepWriter(
                 "appPackageName is required to scope Health Connect records to this app"
             }
             return appPackageName
+        }
+
+        internal suspend fun readAggregateOrNull(reader: suspend () -> Long): Long? {
+            return try {
+                reader()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
         }
     }
 }

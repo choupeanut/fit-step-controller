@@ -5,6 +5,10 @@ import com.choupeanut.fitstepcontroller.data.StepWriteRequest
 import com.choupeanut.fitstepcontroller.data.StepWriter
 import com.choupeanut.fitstepcontroller.data.VerifiedStepWrite
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import java.time.Duration
@@ -124,6 +128,25 @@ class WalkingSessionPersistenceTest {
         assertThat(store.load()!!.error).contains("temporary")
     }
 
+    @Test
+    fun cancellationDuringInFlightWriteLeavesPendingChunkForPauseOrStop() = runTest {
+        var current = epoch
+        val store = InMemoryWalkingSessionStore()
+        val writer = BlockingWriter()
+        val controller = controller(writer, store) { current }
+        controller.start(WalkingPlanInput(6.0, 1_000, 0.75))
+        current = epoch.plusSeconds(60)
+
+        val tickJob = launch { controller.tick() }
+        writer.started.await()
+        tickJob.cancelAndJoin()
+
+        val paused = controller.pause()
+        assertThat(paused.state).isEqualTo(WalkingSessionState.PAUSED)
+        assertThat(store.load()!!.pendingChunk).isNotNull()
+        assertThat(store.load()!!.confirmedSteps).isEqualTo(0)
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun plansLongerThanFiveHoursAreRejected() {
         val controller = controller(RecordingWriter(), InMemoryWalkingSessionStore()) { epoch }
@@ -164,6 +187,17 @@ class WalkingSessionPersistenceTest {
                 platformRecordId = "platform-${requests.size}",
                 wasAlreadyPresent = false,
             )
+        }
+
+        override suspend fun readTotal(start: Instant, end: Instant): Long = 0
+    }
+
+    private class BlockingWriter : StepWriter {
+        val started = CompletableDeferred<Unit>()
+
+        override suspend fun writeAndVerify(request: StepWriteRequest): VerifiedStepWrite {
+            started.complete(Unit)
+            awaitCancellation()
         }
 
         override suspend fun readTotal(start: Instant, end: Instant): Long = 0

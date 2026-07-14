@@ -21,8 +21,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class WalkingSessionService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -30,6 +35,10 @@ class WalkingSessionService : Service() {
     private val planner = StepPlanner()
     private var controller: WalkingSessionController? = null
     private var sessionLoaded = false
+    /** Serializes every controller operation, including an in-flight provider write. */
+    private val sessionMutex = Mutex()
+    /** Preserves the order of lifecycle commands received by onStartCommand. */
+    private var commandTail: Job? = null
 
     private val sessionStore by lazy { SharedPreferencesWalkingSessionStore(this) }
 
@@ -39,30 +48,37 @@ class WalkingSessionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startSession(intent)
-            ACTION_PAUSE -> runCatching { updateSession { it.pause() } }
-                .onFailure { failure -> publishFailure(failure.message ?: "Unable to pause walking session") }
-            ACTION_RESUME -> resumeSession()
-            ACTION_STOP -> runCatching { stopSession() }
-                .onFailure { failure -> publishFailure(failure.message ?: "Unable to stop walking session"); stopSelf() }
-            null -> restoreSession()
+            ACTION_START -> startSession(intent, startId)
+            ACTION_PAUSE -> pauseSession(startId)
+            ACTION_RESUME -> resumeSession(startId)
+            ACTION_STOP -> stopSession(startId)
+            null -> restoreSession(startId)
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
         job?.cancel()
+        scope.cancel()
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        publishFailure("Android dataSync foreground service timeout")
-        stopSelf(startId)
+        job?.cancel()
+        enqueueCommand {
+            try {
+                failAndPublish("Android dataSync foreground service timeout")
+            } catch (_: CancellationException) {
+                return@enqueueCommand
+            } finally {
+                stopSelf(startId)
+            }
+        }
     }
 
-    private fun startSession(intent: Intent) {
+    private fun startSession(intent: Intent, startId: Int) {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, notification("Preparing walking session"))
 
@@ -70,88 +86,163 @@ class WalkingSessionService : Service() {
         val target = intent.getLongExtra(EXTRA_TARGET_STEPS, 1000L)
         val stride = intent.getDoubleExtra(EXTRA_STRIDE_METERS, 0.75)
 
-        try {
-            val started = requireController().start(WalkingPlanInput(speed, target, stride))
-            sessionLoaded = true
-            publishProgress(started)
-            launchLoop()
-        } catch (failure: Throwable) {
-            val message = failure.message ?: "Unable to start walking session"
-            publishFailure(message)
-            stopSelf()
+        enqueueCommand {
+            try {
+                stopLoopAndJoin()
+                val started = sessionMutex.withLock {
+                    requireController().start(WalkingPlanInput(speed, target, stride)).also {
+                        sessionLoaded = true
+                    }
+                }
+                publishProgress(started)
+                launchLoop(startId)
+            } catch (cancelled: CancellationException) {
+                return@enqueueCommand
+            } catch (failure: Throwable) {
+                failAndPublish(failure.message ?: "Unable to start walking session")
+                stopSelf(startId)
+            }
         }
     }
 
-    private fun restoreSession() {
+    private fun restoreSession(startId: Int) {
         createNotificationChannel()
-        try {
-            startForeground(NOTIFICATION_ID, notification("Restoring walking session"))
-            val restored = requireController().restore() ?: run {
-                stopSelf()
-                return
+        startForeground(NOTIFICATION_ID, notification("Restoring walking session"))
+        enqueueCommand {
+            try {
+                val restored = sessionMutex.withLock {
+                    requireController().restore().also { sessionLoaded = true }
+                }
+                if (restored == null) {
+                    stopSelf(startId)
+                    return@enqueueCommand
+                }
+                publishProgress(restored)
+                if (restored.state == WalkingSessionState.RUNNING) {
+                    launchLoop(startId)
+                } else {
+                    // Paused and terminal sessions must not keep a dataSync FGS alive.
+                    stopSelf(startId)
+                }
+            } catch (cancelled: CancellationException) {
+                return@enqueueCommand
+            } catch (failure: Throwable) {
+                failAndPublish(failure.message ?: "Unable to restore walking session")
+                stopSelf(startId)
             }
-            sessionLoaded = true
-            publishProgress(restored)
-            if (restored.state == WalkingSessionState.RUNNING) launchLoop()
-        } catch (failure: Throwable) {
-            publishFailure(failure.message ?: "Unable to restore walking session")
-            stopSelf()
         }
     }
 
-    private fun resumeSession() {
-        try {
-            createNotificationChannel()
-            startForeground(NOTIFICATION_ID, notification("Resuming walking session"))
-            val current = requireController().restore()
-            sessionLoaded = current != null
-            val resumed = if (current?.state == WalkingSessionState.PAUSED) {
-                requireController().resume()
-            } else {
-                current
-            }
-            if (resumed != null) {
+    private fun resumeSession(startId: Int) {
+        createNotificationChannel()
+        startForeground(NOTIFICATION_ID, notification("Resuming walking session"))
+        enqueueCommand {
+            try {
+                stopLoopAndJoin()
+                val resumed = sessionMutex.withLock {
+                    val current = requireController().restore()
+                    sessionLoaded = current != null
+                    if (current?.state == WalkingSessionState.PAUSED) {
+                        requireController().resume()
+                    } else {
+                        current
+                    }
+                }
+                if (resumed == null) {
+                    stopSelf(startId)
+                    return@enqueueCommand
+                }
                 publishProgress(resumed)
-                if (resumed.state == WalkingSessionState.RUNNING) launchLoop()
+                if (resumed.state == WalkingSessionState.RUNNING) {
+                    launchLoop(startId)
+                } else {
+                    stopSelf(startId)
+                }
+            } catch (cancelled: CancellationException) {
+                return@enqueueCommand
+            } catch (failure: Throwable) {
+                failAndPublish(failure.message ?: "Unable to resume walking session")
+                stopSelf(startId)
             }
-        } catch (failure: Throwable) {
-            publishFailure(failure.message ?: "Unable to resume walking session")
-            stopSelf()
         }
     }
 
-    private fun stopSession() {
-        job?.cancel()
-        runCatching { updateSession { it.stop() } }
-        stopSelf()
+    private fun stopSession(startId: Int) {
+        enqueueCommand {
+            try {
+                stopLoopAndJoin()
+                val stopped = sessionMutex.withLock {
+                    val restored = requireController().restore()
+                    sessionLoaded = restored != null
+                    if (restored == null) null else requireController().stop()
+                }
+                if (stopped != null) publishProgress(stopped)
+            } catch (cancelled: CancellationException) {
+                return@enqueueCommand
+            } catch (failure: Throwable) {
+                failAndPublish(failure.message ?: "Unable to stop walking session")
+            } finally {
+                stopSelf(startId)
+            }
+        }
     }
 
-    private fun launchLoop() {
+    private fun pauseSession(startId: Int) {
+        // Cancel first, then join under the same mutex used by tick(). This prevents
+        // an in-flight write from persisting RUNNING after PAUSED was saved.
+        job?.cancel()
+        enqueueCommand {
+            try {
+                stopLoopAndJoin()
+                val paused = sessionMutex.withLock {
+                    restoreControllerIfNeeded()
+                    requireController().pause()
+                }
+                publishProgress(paused)
+            } catch (cancelled: CancellationException) {
+                return@enqueueCommand
+            } catch (failure: Throwable) {
+                failAndPublish(failure.message ?: "Unable to pause walking session")
+            } finally {
+                // A paused session is durable and can be resumed by a new foreground start.
+                stopSelf(startId)
+            }
+        }
+    }
+
+    private fun launchLoop(startId: Int) {
         job?.cancel()
         job = scope.launch {
             while (true) {
                 delay(TICK_INTERVAL_MILLIS)
-                val snapshot = runCatching { requireController().tick() }.getOrElse { failure ->
-                    publishFailure(failure.message ?: "Walking session failed")
-                    stopSelf()
+                val snapshot = try {
+                    sessionMutex.withLock {
+                        requireController().tick().also(::publishProgress)
+                    }
+                } catch (cancelled: CancellationException) {
+                    return@launch
+                } catch (failure: Throwable) {
+                    failAndPublish(failure.message ?: "Walking session failed")
+                    stopSelf(startId)
                     return@launch
                 }
-                publishProgress(snapshot)
                 if (snapshot.state == WalkingSessionState.COMPLETED ||
                     snapshot.state == WalkingSessionState.FAILED ||
                     snapshot.state == WalkingSessionState.STOPPED
                 ) {
-                    stopSelf()
+                    stopSelf(startId)
                     return@launch
                 }
             }
         }
     }
 
-    private fun updateSession(operation: (WalkingSessionController) -> WalkingSessionSnapshot) {
-        restoreControllerIfNeeded()
-        val snapshot = operation(requireController())
-        publishProgress(snapshot)
+    private fun enqueueCommand(block: suspend () -> Unit) {
+        val previous = commandTail
+        commandTail = scope.launch {
+            previous?.join()
+            block()
+        }
     }
 
     private fun createController(): WalkingSessionController {
@@ -170,22 +261,27 @@ class WalkingSessionService : Service() {
         return controller ?: createController().also { controller = it }
     }
 
-    private fun publishFailure(message: String) {
-        val current = sessionStore.load()
-        val snapshot = runCatching {
+    private suspend fun failAndPublish(message: String) {
+        val snapshot = sessionMutex.withLock {
+            val current = sessionStore.load()
             if (current != null) {
                 restoreControllerIfNeeded()
                 requireController().fail(message)
             } else {
                 null
             }
-        }.getOrNull()
+        }
         if (snapshot != null) publishProgress(snapshot) else {
             getSystemService(NotificationManager::class.java).notify(
                 NOTIFICATION_ID,
                 notification("Failed: $message"),
             )
         }
+    }
+
+    private suspend fun stopLoopAndJoin() {
+        job?.cancelAndJoin()
+        job = null
     }
 
     private fun restoreControllerIfNeeded() {

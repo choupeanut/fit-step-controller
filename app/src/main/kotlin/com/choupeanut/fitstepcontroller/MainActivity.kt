@@ -258,7 +258,7 @@ private fun FitStepApp(activity: ComponentActivity) {
                                         )
                                     )
                                     check(result.verified) { "Health Connect exact record verification failed" }
-                                    "Requested $steps steps; app record read ${result.exactRecordCount}; Health Connect aggregate reads ${result.aggregateSteps} in the interval"
+                                    "Requested $steps steps; app record read ${result.exactRecordCount}; Health Connect aggregate reads ${result.aggregateSteps ?: "unavailable"} in the interval"
                                 }.onFailure {
                                     val message = it.message ?: "Direct write failed"
                                     directStatus = message

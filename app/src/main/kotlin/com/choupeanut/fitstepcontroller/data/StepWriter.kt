@@ -56,7 +56,8 @@ data class VerifiedStepWrite(
     val request: StepWriteRequest,
     val recordsWritten: Int,
     val exactRecordCount: Long?,
-    val aggregateSteps: Long,
+    /** Aggregate is diagnostic only; exact app-origin read-back is authoritative. */
+    val aggregateSteps: Long?,
     val platformRecordId: String?,
     val wasAlreadyPresent: Boolean,
 ) {

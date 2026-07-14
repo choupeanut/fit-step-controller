@@ -1,6 +1,7 @@
 package com.choupeanut.fitstepcontroller.data
 
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -15,5 +16,30 @@ class HealthConnectStepWriterTest {
         }
         assertThat(HealthConnectStepWriter.requireAppPackageName("com.example.steps"))
             .isEqualTo("com.example.steps")
+    }
+
+    @Test
+    fun aggregateDiagnosticFailureIsIgnoredAfterExactVerification() = runTest {
+        val aggregate = HealthConnectStepWriter.readAggregateOrNull {
+            error("aggregate IPC unavailable")
+        }
+
+        assertThat(aggregate).isNull()
+        val verified = VerifiedStepWrite(
+            request = StepWriteRequest(
+                interval = com.choupeanut.fitstepcontroller.domain.StepWriteInterval(
+                    start = java.time.Instant.parse("2026-05-04T08:00:00Z"),
+                    end = java.time.Instant.parse("2026-05-04T08:01:00Z"),
+                    count = 100,
+                ),
+                clientRecordId = "test:aggregate-failure",
+            ),
+            recordsWritten = 1,
+            exactRecordCount = 100,
+            aggregateSteps = aggregate,
+            platformRecordId = "record-1",
+            wasAlreadyPresent = false,
+        )
+        assertThat(verified.verified).isTrue()
     }
 }
