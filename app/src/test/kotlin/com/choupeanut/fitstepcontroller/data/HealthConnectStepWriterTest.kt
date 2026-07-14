@@ -1,11 +1,27 @@
 package com.choupeanut.fitstepcontroller.data
 
 import com.google.common.truth.Truth.assertThat
+import com.choupeanut.fitstepcontroller.domain.StepWriteInterval
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.time.Instant
 
 class HealthConnectStepWriterTest {
+    @Test
+    fun canonicalizesIntervalsToHealthConnectMillisecondPrecision() {
+        val interval = StepWriteInterval(
+            start = Instant.parse("2026-07-14T12:00:00.123456789Z"),
+            end = Instant.parse("2026-07-14T12:20:00.987654321Z"),
+            count = 3_000,
+        )
+
+        val normalized = HealthConnectStepWriter.normalizeInterval(interval)
+
+        assertThat(normalized.start).isEqualTo(Instant.parse("2026-07-14T12:00:00.123Z"))
+        assertThat(normalized.end).isEqualTo(Instant.parse("2026-07-14T12:20:00.987Z"))
+    }
+
     @Test
     fun appPackageNameMustBePresentToScopeRawReads() {
         assertThrows(IllegalArgumentException::class.java) {

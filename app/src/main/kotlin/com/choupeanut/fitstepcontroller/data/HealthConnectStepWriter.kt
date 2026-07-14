@@ -7,6 +7,7 @@ import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import com.choupeanut.fitstepcontroller.domain.StepWriteInterval
 import kotlinx.coroutines.CancellationException
 import java.time.Instant
 import java.time.ZoneId
@@ -19,16 +20,20 @@ class HealthConnectStepWriter(
     private val appPackageName: String = requireAppPackageName(appPackageName)
 
     override suspend fun writeAndVerify(request: StepWriteRequest): VerifiedStepWrite {
-        val interval = request.interval
+        // Health Connect serializes interval boundaries as epoch milliseconds. Normalize
+        // caller timestamps before both the write and read-back query so Instant.now()
+        // nanoseconds cannot create a false interval mismatch.
+        val normalizedRequest = request.copy(interval = normalizeInterval(request.interval))
+        val interval = normalizedRequest.interval
         require(interval.count > 0) { "count must be positive" }
         require(interval.end.isAfter(interval.start)) { "end must be after start" }
 
         // A client ID is the idempotency key. Check it before inserting so a retry
         // after an IPC timeout does not create a second record.
-        val existing = readExact(request)
+        val existing = readExact(normalizedRequest)
         if (existing.isNotEmpty()) {
             return verifiedResult(
-                request = request,
+                request = normalizedRequest,
                 records = existing,
                 recordsWritten = 0,
                 platformRecordId = existing.singleOrNull()?.metadata?.id,
@@ -43,12 +48,12 @@ class HealthConnectStepWriter(
             endTime = interval.end,
             endZoneOffset = zoneRules.getOffset(interval.end),
             count = interval.count,
-            metadata = Metadata.manualEntry(request.clientRecordId, request.clientRecordVersion),
+            metadata = Metadata.manualEntry(normalizedRequest.clientRecordId, normalizedRequest.clientRecordVersion),
         )
         val response = client.insertRecords(listOf(record))
-        val inserted = readExact(request)
+        val inserted = readExact(normalizedRequest)
         return verifiedResult(
-            request = request,
+            request = normalizedRequest,
             records = inserted,
             recordsWritten = response.recordIdsList.size,
             platformRecordId = response.recordIdsList.singleOrNull(),
@@ -113,6 +118,13 @@ class HealthConnectStepWriter(
     }
 
     companion object {
+        internal fun normalizeInterval(interval: StepWriteInterval): StepWriteInterval {
+            return interval.copy(
+                start = Instant.ofEpochMilli(interval.start.toEpochMilli()),
+                end = Instant.ofEpochMilli(interval.end.toEpochMilli()),
+            )
+        }
+
         internal fun requireAppPackageName(appPackageName: String?): String {
             require(!appPackageName.isNullOrBlank()) {
                 "appPackageName is required to scope Health Connect records to this app"
