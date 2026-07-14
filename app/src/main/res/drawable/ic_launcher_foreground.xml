@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Lower-left coral footprint: a rounded sole and three soft toes. -->
+    <path
+        android:fillColor="#FF6B6B"
+        android:pathData="M29,77 C25,72 26,64 29,57 C32,50 38,46 44,47 C51,48 55,54 54,61 C53,69 48,77 41,81 C36,84 32,82 29,77 Z" />
+    <path
+        android:fillColor="#FF6B6B"
+        android:pathData="M27,43 C23,41 22,36 25,33 C28,30 33,31 35,34 C37,38 34,42 31,44 C30,44 28,44 27,43 Z" />
+    <path
+        android:fillColor="#FF6B6B"
+        android:pathData="M39,39 C36,36 37,32 40,30 C43,29 47,31 48,34 C49,37 46,40 43,41 C41,41 40,40 39,39 Z" />
+    <path
+        android:fillColor="#FF6B6B"
+        android:pathData="M49,44 C47,41 48,38 51,37 C54,36 57,38 57,41 C57,44 54,46 52,46 C51,46 50,45 49,44 Z" />
+
+    <!-- Upper-right mint footprint: slightly smaller to create forward motion. -->
+    <path
+        android:fillColor="#4FD1B5"
+        android:pathData="M56,61 C53,56 54,49 57,43 C60,37 65,34 71,35 C77,36 81,41 80,47 C79,54 74,61 68,65 C63,68 59,66 56,61 Z" />
+    <path
+        android:fillColor="#4FD1B5"
+        android:pathData="M55,33 C52,31 52,27 54,25 C57,22 61,23 63,26 C65,29 63,33 60,35 C58,35 56,34 55,33 Z" />
+    <path
+        android:fillColor="#4FD1B5"
+        android:pathData="M66,29 C64,26 65,22 68,21 C71,20 74,22 75,25 C76,28 73,31 70,32 C68,32 67,31 66,29 Z" />
+    <path
+        android:fillColor="#4FD1B5"
+        android:pathData="M76,34 C74,31 75,28 78,27 C81,26 84,28 84,31 C84,34 81,36 79,36 C78,36 77,35 76,34 Z" />
+
+    <!-- Blue motion dot: the next step. -->
+    <path
+        android:fillColor="#5BA7FF"
+        android:pathData="M80,24 C80,20 82,18 85,18 C88,18 90,20 90,24 C90,27 88,29 85,29 C82,29 80,27 80,24 Z" />
+</vector>
