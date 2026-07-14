@@ -47,6 +47,15 @@ class StepPlannerTest {
     }
 
     @Test
+    fun direct3000StepIntervalEndsAtSuppliedInstantAndUses25StepsPerSecond() {
+        val interval = planner.directInterval(steps = 3_000, endingAt = fixedNow)
+
+        assertThat(interval.count).isEqualTo(3_000L)
+        assertThat(interval.end).isEqualTo(fixedNow)
+        assertThat(interval.start).isEqualTo(fixedNow.minusSeconds(1_200))
+    }
+
+    @Test
     fun nextWalkingChunkStopsAtTarget() {
         val plan = planner.createWalkingPlan(WalkingPlanInput(speedKmh = 6.0, targetSteps = 10, strideMeters = 0.75))
         val interval = planner.nextWalkingChunk(plan, alreadyWritten = 9, chunkDuration = Duration.ofSeconds(30), now = fixedNow)
