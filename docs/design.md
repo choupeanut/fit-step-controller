@@ -26,3 +26,7 @@ Health Connect is the only write target. Google Fit is treated as an optional co
 ## Verification
 
 Unit tests cover exact record verification, idempotent retries, all-source pagination, interval union and capacity allocation, durable pending chunks, dynamic speed changes, ETA, pause/resume, failure states, automatic stop, aggregate diagnostics through `FakeStepWriter`, and the background wake-lock policy. The target is Android 9+, with manual Health Connect validation on Android 14/15. Android battery-management policies, user force-stop, and the Android 15 six-hour `dataSync` limit remain system-level constraints; paced sessions are capped at five hours.
+
+## AI-assisted changes
+
+Repository-specific AI development rules, architecture invariants, privacy boundaries, validation commands, and release checks are maintained in [AI_USAGE.md](../AI_USAGE.md).

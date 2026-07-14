@@ -1,3 +1,18 @@
+# v1.1.0
+
+Documentation, release-readiness, and AI-agent safety update.
+
+## Changed
+
+- Rewrote the README around the current Mode 1, Mode 2, Advanced direct-entry, Health Connect, validation, and platform-limit behavior.
+- Added `AI_USAGE.md` with architecture invariants, Health Connect correctness rules, safe AI-agent workflow, and release checklist.
+- Documented that Mode 2 empty windows describe missing step records, not proof of physical inactivity.
+- Updated release metadata to version `1.1.0` / version code `8`.
+
+## Validation
+
+- Unit tests, Android lint, debug APK, and release APK builds are required before the `v1.1.0` tag is published.
+
 # v1.0.6
 
 Availability-aware backfill and live pacing controls.

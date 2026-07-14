@@ -1,51 +1,83 @@
 # Fit Step Controller
 
-Modern Android step-entry test app built with Kotlin, Jetpack Compose, and Health Connect.
+Fit Step Controller is an Android test app for writing verified step records to Health Connect. It does not use the deprecated Google Fit Fitness API. Google Fit is an optional consumer of Health Connect data and may display a different, delayed, or source-prioritized aggregate.
 
-## Features
+## Current features
 
-- Mode 1: paced walking from 3 km/h to 12 km/h with a step target and automatic stop.
-- Mode 2: scans today's local 12:00-to-now empty `StepsRecord` windows, shows a theoretical 10 km/h capacity, and fills requested steps oldest-first without overlapping existing records.
-- Advanced direct entry: writes a realistic non-zero time interval immediately when exact manual placement is required.
-- Mode 1 continues from a foreground service after the app is backgrounded or its task is removed, with persisted recovery and a bounded CPU wake lock while running.
-- Mode 1 displays remaining duration and estimated finish time; its speed slider applies live while a session is running.
-- Health Connect read/write permission flow and exact app-record read-back verification.
-- GitHub Actions APK build and release workflow for `v*` tags.
+### Mode 1 — paced walking
 
-## Data Path
+- Plans a target from 3–12 km/h with a configurable stride length.
+- Shows distance, required duration, current speed, remaining time, and estimated finish time.
+- Applies speed-slider changes live while running; already elapsed time keeps the previous rate.
+- Writes verified cadence chunks through a persistent `dataSync` foreground service.
+- Persists progress, pending records, fractional cadence, and current speed for service recreation.
+- Supports pause, resume, stop, automatic completion, sticky restoration, and background CPU wake protection.
 
-The app writes manually entered `StepsRecord` entries to Health Connect. Google Fit can display those records only when the user enables Google Fit's Health Connect sync on the Android device. The app treats its own exact Health Connect record as the write success boundary; Google Fit's displayed total is a separate, source-prioritized aggregate.
+### Mode 2 — empty-window backfill
 
-Health Connect and Google Fit do not treat displayed step count as a raw append-only counter. Both systems merge step data from multiple sources, avoid duplicate activity intervals, and may show a delayed or estimated total. Mode 2 reads raw `StepsRecord` intervals from all granted sources and conservatively treats their union as occupied; its "empty" windows mean no step record was found, not proof that the user was physically inactive. Advanced direct entry stores each submission in a realistic interval ending at the current time and reports both this app's exact raw record and Health Connect's aggregate diagnostic for that interval.
+- Scans all readable Health Connect `StepsRecord` sources for the local-time range `12:00` to now.
+- Treats the union of existing raw record intervals as occupied and shows the remaining empty windows.
+- Calculates a theoretical upper bound at `10 km/h` with a `0.35 m` stride (`7.9365 steps/sec`, about `28,571 steps/hour`).
+- Accepts a requested count up to the current capacity and fills empty windows oldest-first.
+- Re-scans before each write, uses deterministic batch record IDs, verifies each exact record, and reports partial completion if the provider changes during the batch.
+- If the current time is before local noon, the available range is empty.
 
-This project intentionally does not implement game-specific automation, anti-detection behavior, or claims about third-party app reward systems.
+### Advanced direct entry
 
-## Local Build
+The original direct-entry flow remains available for exact manual placement of one record ending at the current time. It is labelled as advanced because it does not perform empty-window planning.
+
+## Data and correctness model
+
+Health Connect is the only write target. The app verifies its own exact raw record—count, interval, and client record ID—before reporting success. Aggregate totals are diagnostics only.
+
+Mode 2 uses raw records from every granted source and deliberately treats their union as occupied. An empty window means that Health Connect returned no `StepsRecord` intersecting the window; it is not proof that the user was physically inactive. `StepsRecord` contains an interval and a total count, not the exact second of every step.
+
+Health Connect read requests are paginated and use the empty data-origin filter for the all-source scan. Aggregate reads can deduplicate Activity data according to user-selected source priority, so Google Fit and Health Connect dashboard totals may differ from the app's exact records.
+
+## Permissions and setup
+
+1. Install the APK and open Health Connect permissions from the app.
+2. Grant this app read and write access to steps.
+3. For Google Fit display, enable Google Fit's Health Connect sync and grant Google Fit access to steps separately.
+4. For long Mode 1 runs, set the app battery usage to **Unrestricted** on devices with aggressive vendor power management.
+
+## Build and test locally
 
 ```bash
-./gradlew test assembleDebug
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease --console=plain
 ```
 
-If Android SDK is not discovered automatically, create `local.properties`:
+Debug APK output:
 
-```properties
-sdk.dir=/path/to/Android/Sdk
+```text
+app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Release
+Release APK output:
 
-The workflow builds APKs for pushes and pull requests. Pushing a tag such as `v1.0.0` also uploads APK artifacts and can be used to create a GitHub release.
+```text
+app/build/outputs/apk/release/app-release.apk
+```
 
-## Google Fit display
+The repository's GitHub Actions workflow runs unit tests, builds both APK variants, uploads artifacts, and publishes a release when a `v*` tag is pushed.
 
-This app does not use the deprecated Google Fit Fitness API. To display records in Google Fit, enable Google Fit's Health Connect sync and grant Google Fit access to steps in Health Connect. Health Connect may deduplicate overlapping Activity records according to the user's source priority, so Google Fit's aggregate can differ from this app's exact record count.
+## Manual validation checklist
 
-## Manual validation on Android 14/15
+- Grant Health Connect permissions and refresh Mode 2. Confirm the displayed local noon-to-now range, empty-window count, available duration, and theoretical capacity.
+- Request a value within the displayed capacity. Confirm the resulting app-origin records are inside previously empty windows and do not overlap existing records.
+- Start Mode 1 with a short target. Confirm the first verified cadence update, move the speed slider while running, and confirm the notification/UI ETA changes.
+- Lock the screen and remove the app task from recents. Confirm the foreground notification and persisted progress continue.
+- Pause for more than one cadence interval, resume, and confirm paused time is not written. Revoke Health Connect permission during a run and confirm the session reports failure without advancing confirmed steps.
+- If Google Fit is part of the test, compare it only as a diagnostic after allowing synchronization time.
 
-1. Grant this app Health Connect read/write access to steps. In Mode 2, refresh the local 12:00-to-now scan, confirm the displayed empty windows and theoretical capacity (`10 km/h`, `0.35 m` stride), then request a value no greater than the current limit. Confirm Health Connect contains the app's exact records in non-overlapping empty windows. The result is based on exact raw records, not on Google Fit's aggregate.
-2. If exact end-at-now placement is needed, use Advanced direct entry to write `3000` steps and confirm in Health Connect that one exact record from this app contains `3000` steps and ends at the current time. The app's success message is based on this raw record, not on Google Fit's aggregate.
-3. Enable Google Fit's Health Connect sync if its dashboard is part of the test. Allow for sync delay and compare the display only as a diagnostic; source priority or deduplication can make its total differ.
-4. Start paced mode with a short target (for example, `1000` steps), note the displayed duration and estimated finish, then move the speed slider while running. Confirm the next progress/notification update reflects the new speed and ETA. Wait through the first 60-second cadence, pause for more than 60 seconds, resume, and verify that paused time is not written.
-5. Stop, relaunch the app, and confirm the persisted state is restored or safely stopped according to the last action. During a provider interruption or revoked permission, confirm the notification/UI reports failure, confirmed steps do not advance, and the pending chunk retains the same client ID for retry.
-6. On Android 15, inspect the foreground-service notification and logcat around service recreation and `dataSync` timeout handling. A timeout must persist a failure state and stop the service instead of silently claiming additional steps.
-7. For long background runs, set the app battery usage to unrestricted on devices with aggressive vendor power management. Android can still interrupt work after a user force-stops the app or when its foreground-service policy limit is reached.
+## Platform limits
+
+Android battery managers, user force-stop, and Android 15 foreground-service policy limits can still interrupt work. Mode 1 is capped at five hours to stay below the Android 15 `dataSync` service limit. No Android API can guarantee survival after a user force-stop.
+
+## AI-assisted development
+
+See [AI_USAGE.md](AI_USAGE.md) for the repository's AI-agent workflow, architectural invariants, validation commands, and Health Connect safety rules.
+
+## License and test signing
+
+The debug and release APKs use the committed test signing configuration for device testing. It is not a production Play Store signing key.
