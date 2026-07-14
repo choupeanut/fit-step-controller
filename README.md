@@ -1,18 +1,17 @@
 # Fit Step Controller
 
-Modern Android step-entry test app built with Kotlin, Jetpack Compose, Google Sign-In, and Health Connect.
+Modern Android step-entry test app built with Kotlin, Jetpack Compose, and Health Connect.
 
 ## Features
 
-- Google Sign-In account linking for user identity.
 - Mode 1: paced walking from 3 km/h to 12 km/h with a step target and automatic stop.
 - Mode 2: direct step entry that writes a realistic non-zero time interval immediately.
-- Health Connect read/write permission flow and aggregate read-back verification.
+- Health Connect read/write permission flow and exact app-record read-back verification.
 - GitHub Actions APK build and release workflow for `v*` tags.
 
 ## Data Path
 
-The app writes `StepsRecord` entries to Health Connect. Google Fit can display those records only when the user enables Google Fit's Health Connect sync on the Android device.
+The app writes manually entered `StepsRecord` entries to Health Connect. Google Fit can display those records only when the user enables Google Fit's Health Connect sync on the Android device. The app treats its own exact Health Connect record as the write success boundary; Google Fit's displayed total is a separate, source-prioritized aggregate.
 
 Health Connect and Google Fit do not treat displayed step count as a raw append-only counter. Both systems merge step data from multiple sources, avoid duplicate activity intervals, and may show a delayed or estimated total. To reduce avoidable loss during repeated manual writes, direct step entry stores each submission in a non-overlapping historical time window and reports both this app's raw records and Health Connect's aggregate for that interval.
 
@@ -34,11 +33,6 @@ sdk.dir=/path/to/Android/Sdk
 
 The workflow builds APKs for pushes and pull requests. Pushing a tag such as `v1.0.0` also uploads APK artifacts and can be used to create a GitHub release.
 
-## Google Sign-In OAuth
+## Google Fit display
 
-Debug and release builds use the same package name, `com.choupeanut.fitstepcontroller`, and the GitHub release APKs use a committed test signing key so OAuth setup is stable across test releases. Register this Android OAuth client:
-
-- Package name: `com.choupeanut.fitstepcontroller`
-- SHA-1: `C0:4B:CB:08:06:37:66:4F:3B:0F:7C:B8:6C:A2:EA:01:D4:2A:B8:75`
-
-If sign-in fails, the app shows the Google Sign-In status code on screen and writes the same details to Logcat under `GoogleSignInManager`.
+This app does not use the deprecated Google Fit Fitness API. To display records in Google Fit, enable Google Fit's Health Connect sync and grant Google Fit access to steps in Health Connect. Health Connect may deduplicate overlapping Activity records according to the user's source priority, so Google Fit's aggregate can differ from this app's exact record count.

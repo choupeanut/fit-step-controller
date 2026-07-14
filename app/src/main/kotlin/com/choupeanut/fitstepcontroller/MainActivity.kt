@@ -23,9 +23,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.DirectionsWalk
-import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -54,18 +53,17 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.health.connect.client.HealthConnectClient
-import com.choupeanut.fitstepcontroller.auth.GoogleSignInResult
-import com.choupeanut.fitstepcontroller.auth.GoogleSignInManager
 import com.choupeanut.fitstepcontroller.data.HealthConnectGateway
 import com.choupeanut.fitstepcontroller.data.HealthConnectStepWriter
-import com.choupeanut.fitstepcontroller.data.StepWriteCursorStore
+import com.choupeanut.fitstepcontroller.data.SharedPreferencesWalkingSessionStore
+import com.choupeanut.fitstepcontroller.data.StepWriteRequest
 import com.choupeanut.fitstepcontroller.domain.StepPlanner
-import com.choupeanut.fitstepcontroller.domain.StepWindowAllocator
 import com.choupeanut.fitstepcontroller.domain.WalkingPlanInput
+import com.choupeanut.fitstepcontroller.domain.WalkingSessionState
 import com.choupeanut.fitstepcontroller.service.WalkingSessionService
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.util.UUID
 
 data class WalkingUiState(
     val state: String = "Idle",
@@ -74,6 +72,7 @@ data class WalkingUiState(
     val percent: Int = 0,
     val isActive: Boolean = false,
     val isPaused: Boolean = false,
+    val error: String? = null,
 )
 
 class MainActivity : ComponentActivity() {
@@ -89,12 +88,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun FitStepApp(activity: ComponentActivity) {
     val scope = rememberCoroutineScope()
-    val signInManager = remember { GoogleSignInManager(activity) }
     val healthGateway = remember { HealthConnectGateway(activity) }
     val planner = remember { StepPlanner() }
-    val cursorStore = remember { StepWriteCursorStore(activity) }
+    val walkingStore = remember { SharedPreferencesWalkingSessionStore(activity) }
 
-    var account by remember { mutableStateOf<GoogleSignInAccount?>(null) }
     var hasHealthPermission by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Ready") }
     var speed by remember { mutableStateOf(5.0) }
@@ -104,18 +101,6 @@ private fun FitStepApp(activity: ComponentActivity) {
     var directStatus by remember { mutableStateOf("Idle") }
     var walkingUiState by remember { mutableStateOf(WalkingUiState()) }
 
-    val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        when (val signInResult = signInManager.parseResult(result.data)) {
-            is GoogleSignInResult.Success -> {
-                account = signInResult.account
-                status = "Signed in as ${signInResult.account.email}"
-            }
-            is GoogleSignInResult.Failure -> {
-                account = null
-                status = signInResult.displayMessage()
-            }
-        }
-    }
     val healthPermissionLauncher = rememberLauncherForActivityResult(healthGateway.permissionContract()) { granted ->
         hasHealthPermission = granted.containsAll(healthGateway.permissions)
         status = if (hasHealthPermission) "Health Connect permissions granted" else "Health Connect permissions are required"
@@ -123,9 +108,20 @@ private fun FitStepApp(activity: ComponentActivity) {
     val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     LaunchedEffect(Unit) {
-        account = signInManager.lastSignedInAccount(activity)
         if (healthGateway.status() == HealthConnectClient.SDK_AVAILABLE) {
             hasHealthPermission = healthGateway.hasPermissions()
+        }
+        walkingStore.load()?.let { persisted ->
+            walkingUiState = WalkingUiState(
+                state = persisted.state.name,
+                writtenSteps = persisted.confirmedSteps,
+                targetSteps = persisted.plan.targetSteps,
+                percent = (persisted.confirmedSteps * 100 / persisted.plan.targetSteps).toInt().coerceIn(0, 100),
+                isActive = persisted.state == WalkingSessionState.RUNNING ||
+                    persisted.state == WalkingSessionState.PAUSED,
+                isPaused = persisted.state == WalkingSessionState.PAUSED,
+                error = persisted.error,
+            )
         }
     }
 
@@ -138,23 +134,23 @@ private fun FitStepApp(activity: ComponentActivity) {
                 val progressState = intent.getStringExtra(WalkingSessionService.EXTRA_STATE) ?: "Running"
                 val percent = intent.getIntExtra(WalkingSessionService.EXTRA_PERCENT, 0)
                 val isPaused = intent.getBooleanExtra(WalkingSessionService.EXTRA_PAUSED, false)
+                val error = intent.getStringExtra(WalkingSessionService.EXTRA_ERROR)
                 walkingUiState = WalkingUiState(
                     state = progressState,
                     writtenSteps = written,
                     targetSteps = target,
                     percent = percent,
-                    isActive = progressState != "Stopped" && target > 0 && written < target,
+                    isActive = progressState.equals("RUNNING", ignoreCase = true) ||
+                        progressState.equals("PAUSED", ignoreCase = true) ||
+                        progressState.equals("STARTING", ignoreCase = true),
                     isPaused = isPaused,
+                    error = error,
                 )
+                if (error != null) status = error
             }
         }
         val filter = IntentFilter(WalkingSessionService.ACTION_PROGRESS)
-        if (Build.VERSION.SDK_INT >= 33) {
-            activity.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            activity.registerReceiver(receiver, filter)
-        }
+        ContextCompat.registerReceiver(activity, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         onDispose {
             activity.unregisterReceiver(receiver)
         }
@@ -173,10 +169,8 @@ private fun FitStepApp(activity: ComponentActivity) {
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     StatusCard(
-                        accountEmail = account?.email,
                         hasHealthPermission = hasHealthPermission,
                         status = status,
-                        onSignIn = { signInLauncher.launch(signInManager.signInIntent()) },
                         onHealthConnect = {
                             when (healthGateway.status()) {
                                 HealthConnectClient.SDK_AVAILABLE -> healthPermissionLauncher.launch(healthGateway.permissions)
@@ -256,16 +250,15 @@ private fun FitStepApp(activity: ComponentActivity) {
                                         client = healthGateway.client(),
                                         appPackageName = activity.packageName,
                                     )
-                                    val allocator = StepWindowAllocator(
-                                        planner = planner,
-                                        loadCursor = { cursorStore.loadDirectCursor() },
-                                        saveCursor = { cursorStore.saveDirectCursor(it) },
+                                    val interval = planner.directInterval(steps, Instant.now())
+                                    val result = writer.writeAndVerify(
+                                        StepWriteRequest(
+                                            interval = interval,
+                                            clientRecordId = "direct:${UUID.randomUUID()}",
+                                        )
                                     )
-                                    val interval = allocator.allocatePastWindow(steps, Instant.now())
-                                    writer.write(interval)
-                                    val rawTotal = writer.readRaw(interval.start, interval.end).sumOf { it.count }
-                                    val aggregateTotal = writer.readTotal(interval.start, interval.end)
-                                    "Requested $steps steps; app raw records read $rawTotal; Health Connect aggregate reads $aggregateTotal in that non-overlapping interval"
+                                    check(result.verified) { "Health Connect exact record verification failed" }
+                                    "Requested $steps steps; app record read ${result.exactRecordCount}; Health Connect aggregate reads ${result.aggregateSteps} in the interval"
                                 }.onFailure {
                                     val message = it.message ?: "Direct write failed"
                                     directStatus = message
@@ -285,22 +278,13 @@ private fun FitStepApp(activity: ComponentActivity) {
 
 @Composable
 private fun StatusCard(
-    accountEmail: String?,
     hasHealthPermission: Boolean,
     status: String,
-    onSignIn: () -> Unit,
     onHealthConnect: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Account and data access", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(
-                    imageVector = if (accountEmail != null) Icons.Default.CheckCircle else Icons.Default.Login,
-                    contentDescription = null,
-                )
-                Text(accountEmail ?: "Not signed in")
-            }
+            Text("Health Connect data access", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(
                     imageVector = if (hasHealthPermission) Icons.Default.CheckCircle else Icons.Default.Warning,
@@ -308,17 +292,15 @@ private fun StatusCard(
                 )
                 Text(if (hasHealthPermission) "Health Connect ready" else "Health Connect permission needed")
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = onSignIn) {
-                    Icon(Icons.Default.Login, contentDescription = null)
-                    Text("Google")
-                }
-                OutlinedButton(onClick = onHealthConnect) {
-                    Icon(Icons.Default.Sync, contentDescription = null)
-                    Text("Health")
-                }
+            OutlinedButton(onClick = onHealthConnect) {
+                Icon(Icons.Default.Sync, contentDescription = null)
+                Text("Health Connect permissions")
             }
             Text(status, style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Google Fit can display these records only when its Health Connect sync is enabled; source priority may change aggregate totals.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
@@ -386,7 +368,7 @@ private fun ModeWalkingCard(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = onStart, enabled = enabled && !walkingUiState.isActive) {
-                    Icon(Icons.Default.DirectionsWalk, contentDescription = null)
+                    Icon(Icons.AutoMirrored.Filled.DirectionsWalk, contentDescription = null)
                     Text("Start")
                 }
                 if (walkingUiState.isActive && !walkingUiState.isPaused) {

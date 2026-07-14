@@ -1,3 +1,19 @@
+# v1.0.4
+
+Health Connect write verification and session recovery.
+
+## Fixed
+
+- Direct step entry writes a unique manual `StepsRecord` ending at the current time and verifies the exact app-origin record before reporting success.
+- Repeated writes use stable client record IDs so retries do not duplicate a pending record.
+- Paced walking persists pending chunks, retries provider failures, restores state after service recreation, excludes paused time, and reports failures instead of silently stopping.
+- Android 15 `dataSync` timeout is handled safely and sessions are limited to five hours.
+
+## Changed
+
+- Google Sign-In was removed because it did not authorize Google Fit writes; Health Connect is now the explicit data boundary.
+- Google Fit totals are documented as a separately synchronized, source-prioritized aggregate.
+
 # v1.0.3
 
 Step interval and walking progress fix.

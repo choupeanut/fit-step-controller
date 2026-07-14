@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "com.choupeanut.fitstepcontroller"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.choupeanut.fitstepcontroller"
-        minSdk = 26
+        minSdk = 28
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -86,8 +86,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
 
-    implementation("androidx.health.connect:connect-client:1.1.0-alpha12")
-    implementation("com.google.android.gms:play-services-auth:21.4.0")
+    implementation("androidx.health.connect:connect-client:1.1.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
