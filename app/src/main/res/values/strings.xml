@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">Fit Step Controller</string>
-    <string name="health_notification_channel">Walking sessions</string>
+    <string name="app_name">步數控制器</string>
+    <string name="health_notification_channel">持續步行工作階段</string>
 </resources>

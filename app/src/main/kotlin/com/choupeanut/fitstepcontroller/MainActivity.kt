@@ -20,26 +20,40 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -48,8 +62,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -86,6 +110,29 @@ data class WalkingUiState(
 )
 
 private const val SPEED_UPDATE_THROTTLE_MILLIS = 250L
+private val QUICK_SPEEDS_KMH = (3..10).toList()
+
+private val FitStepColorScheme = androidx.compose.material3.lightColorScheme(
+    primary = Color(0xFF176B67),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFC4EEE7),
+    onPrimaryContainer = Color(0xFF003733),
+    secondary = Color(0xFFE47763),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFFFDAD2),
+    onSecondaryContainer = Color(0xFF3A0904),
+    tertiary = Color(0xFF607C72),
+    background = Color(0xFFFFFBF7),
+    surface = Color(0xFFFFFBF7),
+    surfaceVariant = Color(0xFFE2F0EC),
+    onSurface = Color(0xFF17201E),
+    onSurfaceVariant = Color(0xFF3F4A47),
+)
+
+private enum class AppSection(val label: String) {
+    WALKING("持續步行"),
+    BACKFILL("空檔補步"),
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,23 +152,25 @@ private fun FitStepApp(activity: ComponentActivity) {
     val walkingStore = remember { SharedPreferencesWalkingSessionStore(activity) }
 
     var hasHealthPermission by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Ready") }
+    var status by remember { mutableStateOf("請先設定 Health Connect 權限") }
     var speed by remember { mutableStateOf(5.0) }
     var stride by remember { mutableStateOf("0.75") }
     var walkTarget by remember { mutableStateOf("1000") }
     var directSteps by remember { mutableStateOf("500") }
-    var directStatus by remember { mutableStateOf("Idle") }
+    var directStatus by remember { mutableStateOf("尚未執行") }
     var walkingUiState by remember { mutableStateOf(WalkingUiState()) }
+    var isSpeedDragging by remember { mutableStateOf(false) }
     var speedDispatchJob by remember { mutableStateOf<Job?>(null) }
     var lastSpeedDispatchAt by remember { mutableStateOf(0L) }
     var availability by remember { mutableStateOf<StepAvailability?>(null) }
-    var availabilityStatus by remember { mutableStateOf("Not scanned") }
+    var availabilityStatus by remember { mutableStateOf("尚未掃描") }
     var availabilityScanning by remember { mutableStateOf(false) }
     var backfillSteps by remember { mutableStateOf("1000") }
+    var selectedSection by remember { mutableStateOf(AppSection.WALKING) }
 
     val healthPermissionLauncher = rememberLauncherForActivityResult(healthGateway.permissionContract()) { granted ->
         hasHealthPermission = granted.containsAll(healthGateway.permissions)
-        status = if (hasHealthPermission) "Health Connect permissions granted" else "Health Connect permissions are required"
+        status = if (hasHealthPermission) "Health Connect 權限已啟用" else "需要 Health Connect 權限"
     }
     val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -136,12 +185,12 @@ private fun FitStepApp(activity: ComponentActivity) {
         }.onSuccess { result ->
             availability = result
             availabilityStatus = if (result == null) {
-                "Today's availability starts at local 12:00"
+                "今日可掃描時段從本地 12:00 開始"
             } else {
-                "Scanned ${result.availableWindows.size} empty windows"
+                "已找到 ${result.availableWindows.size} 個可用空檔"
             }
         }.onFailure { failure ->
-            availabilityStatus = failure.message ?: "Unable to read Health Connect steps"
+            availabilityStatus = failure.message ?: "無法讀取 Health Connect 步數"
             status = availabilityStatus
         }
         availabilityScanning = false
@@ -221,7 +270,9 @@ private fun FitStepApp(activity: ComponentActivity) {
                     remainingMillis = remainingMillis,
                     estimatedEndAtMillis = estimatedEndAt,
                 )
-                if (currentSpeed > 0.0) speed = currentSpeed
+                // A service progress broadcast can arrive while the user is still
+                // dragging. Do not overwrite the gesture's local value mid-drag.
+                if (currentSpeed > 0.0 && !isSpeedDragging) speed = currentSpeed
                 if (error != null) status = error
             }
         }
@@ -232,19 +283,56 @@ private fun FitStepApp(activity: ComponentActivity) {
         }
     }
 
-    MaterialTheme {
+    MaterialTheme(colorScheme = FitStepColorScheme) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Scaffold(
-                topBar = { TopAppBar(title = { Text("Fit Step Controller") }) }
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Pets,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("步數控制器")
+                            }
+                        },
+                    )
+                },
+                bottomBar = {
+                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                        AppSection.values().forEach { section ->
+                            NavigationBarItem(
+                                selected = selectedSection == section,
+                                onClick = { selectedSection = section },
+                                icon = {
+                                    Icon(
+                                        imageVector = if (section == AppSection.WALKING) {
+                                            Icons.AutoMirrored.Filled.DirectionsWalk
+                                        } else {
+                                            Icons.Default.Sync
+                                        },
+                                        contentDescription = section.label,
+                                    )
+                                },
+                                label = { Text(section.label) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                ),
+                            )
+                        }
+                    }
+                }
             ) { padding ->
                 Column(
                     modifier = Modifier
                         .padding(padding)
-                        .padding(16.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                        .fillMaxSize(),
                 ) {
-                    StatusCard(
+                    HealthStatusBanner(
                         hasHealthPermission = hasHealthPermission,
                         status = status,
                         onHealthConnect = {
@@ -254,197 +342,223 @@ private fun FitStepApp(activity: ComponentActivity) {
                             }
                         },
                     )
-
-                    ModeWalkingCard(
-                        speed = speed,
-                        onSpeedChange = { value ->
-                            speed = value
-                            if (walkingUiState.isActive && !walkingUiState.isPaused) {
-                                val now = SystemClock.elapsedRealtime()
-                                val elapsed = now - lastSpeedDispatchAt
-                                val dispatch = {
-                                    speedDispatchJob?.cancel()
-                                    lastSpeedDispatchAt = SystemClock.elapsedRealtime()
-                                    activity.startService(
-                                        WalkingSessionService.updateSpeedIntent(activity, value)
-                                    )
-                                }
-                                if (elapsed >= SPEED_UPDATE_THROTTLE_MILLIS) {
-                                    dispatch()
-                                } else {
-                                    speedDispatchJob?.cancel()
-                                    speedDispatchJob = scope.launch {
-                                        delay(SPEED_UPDATE_THROTTLE_MILLIS - elapsed)
-                                        dispatch()
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        when (selectedSection) {
+                            AppSection.WALKING -> ModeWalkingCard(
+                                speed = speed,
+                                onSpeedChange = { value ->
+                                    isSpeedDragging = true
+                                    speed = value
+                                    if (walkingUiState.isActive && !walkingUiState.isPaused) {
+                                        val now = SystemClock.elapsedRealtime()
+                                        val elapsed = now - lastSpeedDispatchAt
+                                        val dispatch = {
+                                            speedDispatchJob?.cancel()
+                                            lastSpeedDispatchAt = SystemClock.elapsedRealtime()
+                                            activity.startService(
+                                                WalkingSessionService.updateSpeedIntent(activity, value)
+                                            )
+                                        }
+                                        if (elapsed >= SPEED_UPDATE_THROTTLE_MILLIS) {
+                                            dispatch()
+                                        } else {
+                                            speedDispatchJob?.cancel()
+                                            speedDispatchJob = scope.launch {
+                                                delay(SPEED_UPDATE_THROTTLE_MILLIS - elapsed)
+                                                dispatch()
+                                            }
+                                        }
                                     }
-                                }
-                            }
-                        },
-                        onSpeedChangeFinished = {
-                            if (walkingUiState.isActive && !walkingUiState.isPaused) {
-                                speedDispatchJob?.cancel()
-                                lastSpeedDispatchAt = SystemClock.elapsedRealtime()
-                                activity.startService(
-                                    WalkingSessionService.updateSpeedIntent(activity, speed)
-                                )
-                            }
-                        },
-                        target = walkTarget,
-                        onTargetChange = { walkTarget = it },
-                        stride = stride,
-                        onStrideChange = { stride = it },
-                        planner = planner,
-                        enabled = hasHealthPermission,
-                        walkingUiState = walkingUiState,
-                        onStart = {
-                            val target = walkTarget.toLongOrNull() ?: 0
-                            val strideMeters = stride.toDoubleOrNull() ?: 0.75
-                            val plan = runCatching {
-                                planner.createWalkingPlan(WalkingPlanInput(speed, target, strideMeters))
-                            }.getOrElse {
-                                status = it.message ?: "Invalid walking plan"
-                                return@ModeWalkingCard
-                            }
-                            if (Build.VERSION.SDK_INT >= 33) {
-                                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                            val intent = WalkingSessionService.startIntent(activity, plan.speedKmh, plan.targetSteps, plan.strideMeters)
-                            ContextCompat.startForegroundService(activity, intent)
-                            walkingUiState = WalkingUiState(
-                                state = "Starting",
-                                writtenSteps = 0,
-                                targetSteps = plan.targetSteps,
-                                percent = 0,
-                                isActive = true,
-                                isPaused = false,
-                                currentSpeedKmh = plan.speedKmh,
-                                remainingMillis = plan.duration.toMillis(),
-                                estimatedEndAtMillis = System.currentTimeMillis() + plan.duration.toMillis(),
-                            )
-                            status = "Walking mode started for ${plan.targetSteps} steps"
-                        },
-                        onPause = {
-                            activity.startService(WalkingSessionService.pauseIntent(activity))
-                            walkingUiState = walkingUiState.copy(state = "Paused", isPaused = true)
-                            status = "Walking mode paused"
-                        },
-                        onResume = {
-                            activity.startService(WalkingSessionService.resumeIntent(activity))
-                            walkingUiState = walkingUiState.copy(state = "Running", isPaused = false)
-                            status = "Walking mode resumed"
-                        },
-                        onStop = {
-                            activity.startService(WalkingSessionService.stopIntent(activity))
-                            walkingUiState = WalkingUiState(state = "Stopped")
-                            status = "Walking mode stopped"
-                        },
-                    )
-
-                    ModeBackfillCard(
-                        enabled = hasHealthPermission,
-                        steps = backfillSteps,
-                        onStepsChange = { backfillSteps = it.filter(Char::isDigit) },
-                        availability = availability,
-                        status = availabilityStatus,
-                        scanning = availabilityScanning,
-                        onRefresh = { scope.launch { scanAvailability() } },
-                        onWrite = {
-                            val requested = backfillSteps.toLongOrNull() ?: 0L
-                            val current = availability
-                            if (requested <= 0L) {
-                                availabilityStatus = "Enter a positive step count"
-                                status = availabilityStatus
-                                return@ModeBackfillCard
-                            }
-                            if (current == null) {
-                                availabilityStatus = "No current noon-to-now availability; refresh first"
-                                status = availabilityStatus
-                                return@ModeBackfillCard
-                            }
-                            if (requested > current.maxSteps) {
-                                availabilityStatus = "Requested $requested exceeds current capacity ${current.maxSteps}"
-                                status = availabilityStatus
-                                return@ModeBackfillCard
-                            }
-                            scope.launch {
-                                availabilityScanning = true
-                                runCatching {
-                                    val writer = HealthConnectStepWriter(
-                                        client = healthGateway.client(),
-                                        appPackageName = activity.packageName,
-                                    )
-                                    // Re-scan immediately before planning writes so a new
-                                    // record from another source cannot be overwritten.
-                                    val fresh = writer.readTodayNoonAvailability()
-                                        ?: error("Today's availability starts at local 12:00")
-                                    availability = fresh
-                                    require(requested <= fresh.maxSteps) {
-                                        "Requested $requested exceeds refreshed capacity ${fresh.maxSteps}"
-                                    }
-                                    writer.backfillAvailableSteps(
-                                        rangeStart = fresh.rangeStart,
-                                        rangeEnd = fresh.rangeEnd,
-                                        requestedSteps = requested,
-                                        batchId = "mode2:${UUID.randomUUID()}",
-                                    )
-                                }.onSuccess { result ->
-                                    availability = result.finalAvailability
-                                    val message = if (result.completed) {
-                                        "Mode 2 wrote ${result.writtenSteps} steps across ${result.allocations.size} empty windows"
-                                    } else {
-                                        "Mode 2 wrote ${result.writtenSteps}/${result.requestedSteps}; ${result.failure ?: "incomplete"}"
-                                    }
-                                    availabilityStatus = message
-                                    status = message
-                                }.onFailure { failure ->
-                                    availabilityStatus = failure.message ?: "Mode 2 backfill failed"
-                                    status = availabilityStatus
-                                }
-                                availabilityScanning = false
-                            }
-                        },
-                    )
-
-                    ModeDirectCard(
-                        steps = directSteps,
-                        onStepsChange = { directSteps = it },
-                        enabled = hasHealthPermission,
-                        directStatus = directStatus,
-                        onWrite = {
-                            val steps = directSteps.toLongOrNull() ?: 0
-                            if (steps <= 0) {
-                                directStatus = "Enter a positive step count"
-                                status = directStatus
-                                return@ModeDirectCard
-                            }
-                            directStatus = "Writing $steps steps to Health Connect..."
-                            status = directStatus
-                            scope.launch {
-                                runCatching {
-                                    val writer = HealthConnectStepWriter(
-                                        client = healthGateway.client(),
-                                        appPackageName = activity.packageName,
-                                    )
-                                    val interval = planner.directInterval(steps, Instant.now())
-                                    val result = writer.writeAndVerify(
-                                        StepWriteRequest(
-                                            interval = interval,
-                                            clientRecordId = "direct:${UUID.randomUUID()}",
+                                },
+                                onSpeedChangeFinished = { finalSpeed ->
+                                    if (walkingUiState.isActive && !walkingUiState.isPaused) {
+                                        speedDispatchJob?.cancel()
+                                        lastSpeedDispatchAt = SystemClock.elapsedRealtime()
+                                        activity.startService(
+                                            WalkingSessionService.updateSpeedIntent(activity, finalSpeed)
                                         )
+                                    }
+                                    isSpeedDragging = false
+                                },
+                                target = walkTarget,
+                                onTargetChange = { walkTarget = it },
+                                stride = stride,
+                                onStrideChange = { stride = it },
+                                planner = planner,
+                                enabled = hasHealthPermission,
+                                walkingUiState = walkingUiState,
+                                onStart = {
+                                    val target = walkTarget.toLongOrNull() ?: 0
+                                    val strideMeters = stride.toDoubleOrNull() ?: 0.75
+                                    val plan = runCatching {
+                                        planner.createWalkingPlan(WalkingPlanInput(speed, target, strideMeters))
+                                    }.getOrElse {
+                                        status = it.message ?: "步行計畫無效"
+                                        return@ModeWalkingCard
+                                    }
+                                    if (Build.VERSION.SDK_INT >= 33) {
+                                        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    }
+                                    val intent = WalkingSessionService.startIntent(activity, plan.speedKmh, plan.targetSteps, plan.strideMeters)
+                                    ContextCompat.startForegroundService(activity, intent)
+                                    walkingUiState = WalkingUiState(
+                                        state = "Starting",
+                                        writtenSteps = 0,
+                                        targetSteps = plan.targetSteps,
+                                        percent = 0,
+                                        isActive = true,
+                                        isPaused = false,
+                                        currentSpeedKmh = plan.speedKmh,
+                                        remainingMillis = plan.duration.toMillis(),
+                                        estimatedEndAtMillis = System.currentTimeMillis() + plan.duration.toMillis(),
                                     )
-                                    check(result.verified) { "Health Connect exact record verification failed" }
-                                    "Requested $steps steps; app record read ${result.exactRecordCount}; Health Connect aggregate reads ${result.aggregateSteps ?: "unavailable"} in the interval"
-                                }.onFailure {
-                                    val message = it.message ?: "Direct write failed"
-                                    directStatus = message
-                                    status = message
-                                }.onSuccess { message ->
-                                    directStatus = message
-                                    status = message
+                                    status = "Mode 1 已開始：目標 ${plan.targetSteps} 步"
+                                },
+                                onPause = {
+                                    activity.startService(WalkingSessionService.pauseIntent(activity))
+                                    walkingUiState = walkingUiState.copy(state = "Paused", isPaused = true)
+                                    status = "Mode 1 已暫停"
+                                },
+                                onResume = {
+                                    activity.startService(WalkingSessionService.resumeIntent(activity))
+                                    walkingUiState = walkingUiState.copy(state = "Running", isPaused = false)
+                                    status = "Mode 1 已繼續"
+                                },
+                                onStop = {
+                                    activity.startService(WalkingSessionService.stopIntent(activity))
+                                    walkingUiState = WalkingUiState(state = "Stopped")
+                                    status = "Mode 1 已停止"
+                                },
+                            )
+
+                            AppSection.BACKFILL -> {
+                                ModeBackfillCard(
+                                    enabled = hasHealthPermission,
+                                    steps = backfillSteps,
+                                    onStepsChange = { backfillSteps = it.filter(Char::isDigit) },
+                                    availability = availability,
+                                    status = availabilityStatus,
+                                    scanning = availabilityScanning,
+                                    onRefresh = { scope.launch { scanAvailability() } },
+                                    onWrite = {
+                                        val requested = backfillSteps.toLongOrNull() ?: 0L
+                                        val current = availability
+                                        if (requested <= 0L) {
+                                            availabilityStatus = "請輸入大於 0 的步數"
+                                            status = availabilityStatus
+                                            return@ModeBackfillCard
+                                        }
+                                        if (current == null) {
+                                            availabilityStatus = "尚未取得今日空檔，請先重新掃描"
+                                            status = availabilityStatus
+                                            return@ModeBackfillCard
+                                        }
+                                        if (requested > current.maxSteps) {
+                                            availabilityStatus = "要求 $requested 步，超過目前上限 ${current.maxSteps} 步"
+                                            status = availabilityStatus
+                                            return@ModeBackfillCard
+                                        }
+                                        scope.launch {
+                                            availabilityScanning = true
+                                            runCatching {
+                                                val writer = HealthConnectStepWriter(
+                                                    client = healthGateway.client(),
+                                                    appPackageName = activity.packageName,
+                                                )
+                                                // Re-scan immediately before planning writes so a new
+                                                // record from another source cannot be overwritten.
+                                                val fresh = writer.readTodayNoonAvailability()
+                                                    ?: error("今日可掃描時段從本地 12:00 開始")
+                                                availability = fresh
+                                                require(requested <= fresh.maxSteps) {
+                                                    "要求 $requested 步，超過重新掃描後的上限 ${fresh.maxSteps} 步"
+                                                }
+                                                writer.backfillAvailableSteps(
+                                                    rangeStart = fresh.rangeStart,
+                                                    rangeEnd = fresh.rangeEnd,
+                                                    requestedSteps = requested,
+                                                    batchId = "mode2:${UUID.randomUUID()}",
+                                                )
+                                            }.onSuccess { result ->
+                                                availability = result.finalAvailability
+                                                val message = if (result.completed) {
+                                                    "Mode 2 已在 ${result.allocations.size} 個空檔寫入 ${result.writtenSteps} 步"
+                                                } else {
+                                                    "Mode 2 已寫入 ${result.writtenSteps}/${result.requestedSteps} 步；${result.failure ?: "尚未完成"}"
+                                                }
+                                                availabilityStatus = message
+                                                status = message
+                                            }.onFailure { failure ->
+                                                availabilityStatus = failure.message ?: "Mode 2 補步失敗"
+                                                status = availabilityStatus
+                                            }
+                                            availabilityScanning = false
+                                        }
+                                    },
+                                )
+                                var showAdvancedDirect by remember { mutableStateOf(false) }
+                                OutlinedButton(
+                                    onClick = { showAdvancedDirect = !showAdvancedDirect },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(
+                                        imageVector = if (showAdvancedDirect) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = null,
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(if (showAdvancedDirect) "收合進階寫入" else "進階：直接寫入步數")
+                                }
+                                if (showAdvancedDirect) {
+                                    ModeDirectCard(
+                                        steps = directSteps,
+                                        onStepsChange = { directSteps = it.filter(Char::isDigit) },
+                                        enabled = hasHealthPermission,
+                                        directStatus = directStatus,
+                                        onWrite = {
+                                            val steps = directSteps.toLongOrNull() ?: 0
+                                            if (steps <= 0) {
+                                                directStatus = "請輸入大於 0 的步數"
+                                                status = directStatus
+                                                return@ModeDirectCard
+                                            }
+                                            directStatus = "正在將 $steps 步寫入 Health Connect…"
+                                            status = directStatus
+                                            scope.launch {
+                                                runCatching {
+                                                    val writer = HealthConnectStepWriter(
+                                                        client = healthGateway.client(),
+                                                        appPackageName = activity.packageName,
+                                                    )
+                                                    val interval = planner.directInterval(steps, Instant.now())
+                                                    val result = writer.writeAndVerify(
+                                                        StepWriteRequest(
+                                                            interval = interval,
+                                                            clientRecordId = "direct:${UUID.randomUUID()}",
+                                                        )
+                                                    )
+                                                    check(result.verified) { "Health Connect 紀錄驗證失敗" }
+                                                    "已要求 $steps 步；App 讀到 ${result.exactRecordCount} 筆紀錄，區間彙總 ${result.aggregateSteps ?: "無資料"} 步"
+                                                }.onFailure {
+                                                    val message = it.message ?: "直接寫入失敗"
+                                                    directStatus = message
+                                                    status = message
+                                                }.onSuccess { message ->
+                                                    directStatus = message
+                                                    status = message
+                                                }
+                                            }
+                                        },
+                                    )
                                 }
                             }
-                        },
-                    )
+                        }
+                    }
                 }
             }
         }
@@ -452,30 +566,48 @@ private fun FitStepApp(activity: ComponentActivity) {
 }
 
 @Composable
-private fun StatusCard(
+private fun HealthStatusBanner(
     hasHealthPermission: Boolean,
     status: String,
     onHealthConnect: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Health Connect data access", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(
-                    imageVector = if (hasHealthPermission) Icons.Default.CheckCircle else Icons.Default.Warning,
-                    contentDescription = null,
-                )
-                Text(if (hasHealthPermission) "Health Connect ready" else "Health Connect permission needed")
-            }
-            OutlinedButton(onClick = onHealthConnect) {
-                Icon(Icons.Default.Sync, contentDescription = null)
-                Text("Health Connect permissions")
-            }
-            Text(status, style = MaterialTheme.typography.bodySmall)
-            Text(
-                "Google Fit can display these records only when its Health Connect sync is enabled; source priority may change aggregate totals.",
-                style = MaterialTheme.typography.bodySmall,
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        color = if (hasHealthPermission) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+        } else {
+            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f)
+        },
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                imageVector = if (hasHealthPermission) Icons.Default.CheckCircle else Icons.Default.Warning,
+                contentDescription = null,
+                tint = if (hasHealthPermission) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.secondary
+                },
             )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    if (hasHealthPermission) "Health Connect 已連線" else "需要 Health Connect 權限",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Text(status, style = MaterialTheme.typography.bodySmall)
+            }
+            if (!hasHealthPermission) {
+                OutlinedButton(onClick = onHealthConnect) {
+                    Text("設定")
+                }
+            }
         }
     }
 }
@@ -484,7 +616,7 @@ private fun StatusCard(
 private fun ModeWalkingCard(
     speed: Double,
     onSpeedChange: (Double) -> Unit,
-    onSpeedChangeFinished: () -> Unit,
+    onSpeedChangeFinished: (Double) -> Unit,
     target: String,
     onTargetChange: (String) -> Unit,
     stride: String,
@@ -497,6 +629,13 @@ private fun ModeWalkingCard(
     onResume: () -> Unit,
     onStop: () -> Unit,
 ) {
+    var sliderValue by remember { mutableStateOf(speed.toFloat()) }
+    var isSliderDragging by remember { mutableStateOf(false) }
+
+    LaunchedEffect(speed, isSliderDragging) {
+        if (!isSliderDragging) sliderValue = speed.toFloat()
+    }
+
     val preview = runCatching {
         planner.createWalkingPlan(
             WalkingPlanInput(
@@ -507,88 +646,315 @@ private fun ModeWalkingCard(
         )
     }.getOrNull()
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Mode 1: paced walking", style = MaterialTheme.typography.titleMedium)
-            Text("${"%.1f".format(speed)} km/h")
-            Slider(
-                value = speed.toFloat(),
-                onValueChange = { onSpeedChange(it.toDouble()) },
-                onValueChangeFinished = onSpeedChangeFinished,
-                valueRange = 3f..12f,
-                enabled = enabled && !walkingUiState.isPaused,
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(22.dp),
+    ) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("持續步行", style = MaterialTheme.typography.headlineSmall)
+                    Text("依指定速度逐步寫入步數", style = MaterialTheme.typography.bodyMedium)
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                        horizontalAlignment = Alignment.End,
+                    ) {
+                        Text("目前速率", style = MaterialTheme.typography.labelSmall)
+                        Text(
+                            "${"%.1f".format(speed)} km/h",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                }
+            }
+
+            if (preview != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WalkingStat(
+                        label = "目標步數",
+                        value = "${preview.targetSteps}",
+                        modifier = Modifier.weight(1f),
+                    )
+                    WalkingStat(
+                        label = "預估時間",
+                        value = formatDuration(preview.duration.toMillis()),
+                        modifier = Modifier.weight(1f),
+                    )
+                    WalkingStat(
+                        label = "距離",
+                        value = "${preview.distanceMeters.toLong()} m",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+    Text("調整步速", style = MaterialTheme.typography.titleMedium)
+    val speedControlsEnabled = enabled && !walkingUiState.isPaused
+    val sliderRange = 3f..12f
+            SpeedSlider(
+                value = sliderValue,
+                valueRange = sliderRange,
+                enabled = speedControlsEnabled,
+                onValueChange = {
+                    isSliderDragging = true
+                    sliderValue = it
+                    onSpeedChange(it.toDouble())
+                },
+                onValueChangeFinished = {
+                    isSliderDragging = false
+                    onSpeedChangeFinished(sliderValue.toDouble())
+                },
             )
+            Text("快速選擇（km/h）", style = MaterialTheme.typography.labelLarge)
+            QUICK_SPEEDS_KMH.chunked(4).forEach { rowSpeeds ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    rowSpeeds.forEach { quickSpeed ->
+                        val isSelected = kotlin.math.abs(speed - quickSpeed) < 0.05
+                        val onQuickSpeed = {
+                            onSpeedChange(quickSpeed.toDouble())
+                            onSpeedChangeFinished(quickSpeed.toDouble())
+                        }
+                        if (isSelected) {
+                            Button(
+                                onClick = onQuickSpeed,
+                                enabled = speedControlsEnabled,
+                                modifier = Modifier.weight(1f),
+                            ) { Text("$quickSpeed") }
+                        } else {
+                            OutlinedButton(
+                                onClick = onQuickSpeed,
+                                enabled = speedControlsEnabled,
+                                modifier = Modifier.weight(1f),
+                            ) { Text("$quickSpeed") }
+                        }
+                    }
+                }
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = target,
                     onValueChange = onTargetChange,
                     modifier = Modifier.weight(1f),
-                    label = { Text("Target steps") },
+                    label = { Text("目標步數") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     enabled = !walkingUiState.isActive,
+                    singleLine = true,
                 )
                 OutlinedTextField(
                     value = stride,
                     onValueChange = onStrideChange,
                     modifier = Modifier.weight(1f),
-                    label = { Text("Stride m") },
+                    label = { Text("步幅（公尺）") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     enabled = !walkingUiState.isActive,
+                    singleLine = true,
                 )
             }
+
             if (preview != null) {
-                Text("Distance ${preview.distanceMeters.toLong()} m, duration ${preview.duration.toMinutes()} min")
                 Text(
-                    "Estimated finish ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(System.currentTimeMillis() + preview.duration.toMillis()))}",
-                    style = MaterialTheme.typography.bodySmall,
+                    "預計完成：${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(System.currentTimeMillis() + preview.duration.toMillis()))}",
+                    style = MaterialTheme.typography.bodyMedium,
                 )
-                preview.warnings.forEach { Text(it, color = MaterialTheme.colorScheme.error) }
-            }
-            if (walkingUiState.isActive || walkingUiState.state != "Idle") {
-                LinearProgressIndicator(
-                    progress = { (walkingUiState.percent / 100f).coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    "${walkingUiState.state}: ${walkingUiState.writtenSteps}/${walkingUiState.targetSteps} steps (${walkingUiState.percent}%)",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                if (walkingUiState.currentSpeedKmh > 0.0) {
+                preview.warnings.forEach { warning ->
                     Text(
-                        "Speed ${"%.1f".format(walkingUiState.currentSpeedKmh)} km/h · " +
-                            "remaining ${formatEta(walkingUiState.remainingMillis)}",
+                        localizedPlanWarning(warning),
+                        color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    val endAt = walkingUiState.estimatedEndAtMillis
-                    if (endAt > 0L && !walkingUiState.isPaused) {
-                        Text(
-                            "Estimated finish ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(endAt))}",
-                            style = MaterialTheme.typography.bodySmall,
+                }
+            }
+
+            if (walkingUiState.isActive || walkingUiState.state != "Idle") {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LinearProgressIndicator(
+                            progress = { (walkingUiState.percent / 100f).coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
                         )
+                        Text(
+                            "${localizedWalkingState(walkingUiState.state)}：${walkingUiState.writtenSteps}/${walkingUiState.targetSteps} 步（${walkingUiState.percent}%）",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (walkingUiState.currentSpeedKmh > 0.0) {
+                            Text(
+                                "目前 ${"%.1f".format(walkingUiState.currentSpeedKmh)} km/h · 剩餘 ${formatEta(walkingUiState.remainingMillis)}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            val endAt = walkingUiState.estimatedEndAtMillis
+                            if (endAt > 0L && !walkingUiState.isPaused) {
+                                Text(
+                                    "預計結束：${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(endAt))}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = onStart, enabled = enabled && !walkingUiState.isActive) {
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onStart,
+                    enabled = enabled && !walkingUiState.isActive,
+                    modifier = Modifier.weight(1f),
+                ) {
                     Icon(Icons.AutoMirrored.Filled.DirectionsWalk, contentDescription = null)
-                    Text("Start")
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("開始")
                 }
                 if (walkingUiState.isActive && !walkingUiState.isPaused) {
-                    OutlinedButton(onClick = onPause) {
-                        Text("Pause")
-                    }
+                    OutlinedButton(onClick = onPause, modifier = Modifier.weight(1f)) { Text("暫停") }
                 }
                 if (walkingUiState.isActive && walkingUiState.isPaused) {
-                    OutlinedButton(onClick = onResume) {
-                        Text("Resume")
-                    }
+                    OutlinedButton(onClick = onResume, modifier = Modifier.weight(1f)) { Text("繼續") }
                 }
-                OutlinedButton(onClick = onStop) {
-                    Text("Stop")
-                }
+                OutlinedButton(
+                    onClick = onStop,
+                    enabled = walkingUiState.isActive,
+                    modifier = Modifier.weight(1f),
+                ) { Text("停止") }
             }
         }
     }
+}
+
+@Composable
+private fun SpeedSlider(
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    enabled: Boolean,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+) {
+    val latestOnValueChange by rememberUpdatedState(onValueChange)
+    val latestOnValueChangeFinished by rememberUpdatedState(onValueChangeFinished)
+    val density = LocalDensity.current
+    val activeColor = if (enabled) MaterialTheme.colorScheme.primary else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    }
+    val inactiveColor = if (enabled) MaterialTheme.colorScheme.primaryContainer else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    }
+
+    fun valueAtPosition(x: Float, width: Int): Float {
+        val horizontalPadding = with(density) { 12.dp.toPx() }
+        val trackWidth = (width / 1f - horizontalPadding * 2f).coerceAtLeast(1f)
+        val fraction = ((x - horizontalPadding) / trackWidth).coerceIn(0f, 1f)
+        return valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
+    }
+
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .semantics {
+                contentDescription = "調整步速"
+                progressBarRangeInfo = ProgressBarRangeInfo(value, valueRange, 0)
+                setProgress { target ->
+                    if (!enabled) return@setProgress false
+                    val next = target.coerceIn(valueRange.start, valueRange.endInclusive)
+                    latestOnValueChange(next)
+                    latestOnValueChangeFinished()
+                    true
+                }
+            }
+            .pointerInput(enabled, valueRange) {
+                if (!enabled) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val tappedValue = valueAtPosition(down.position.x, size.width)
+                    val drag = awaitHorizontalTouchSlopOrCancellation(down.id) { change, _ ->
+                        change.consume()
+                        latestOnValueChange(valueAtPosition(change.position.x, size.width))
+                    }
+                    if (drag != null) {
+                        horizontalDrag(drag.id) { change ->
+                            change.consume()
+                            latestOnValueChange(valueAtPosition(change.position.x, size.width))
+                        }
+                    } else {
+                        // A release before horizontal touch-slop is a track tap.
+                        latestOnValueChange(tappedValue)
+                    }
+                    latestOnValueChangeFinished()
+                }
+            },
+    ) {
+        val horizontalPadding = 12.dp.toPx()
+        val trackStart = horizontalPadding
+        val trackEnd = size.width - horizontalPadding
+        val centerY = size.height / 2f
+        val trackHeight = 4.dp.toPx()
+        val thumbRadius = 10.dp.toPx()
+        val fraction = ((value - valueRange.start) /
+            (valueRange.endInclusive - valueRange.start)).coerceIn(0f, 1f)
+        val thumbX = trackStart + (trackEnd - trackStart) * fraction
+        drawRoundRect(
+            color = inactiveColor,
+            topLeft = androidx.compose.ui.geometry.Offset(trackStart, centerY - trackHeight / 2f),
+            size = androidx.compose.ui.geometry.Size(trackEnd - trackStart, trackHeight),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(trackHeight / 2f),
+        )
+        drawRoundRect(
+            color = activeColor,
+            topLeft = androidx.compose.ui.geometry.Offset(trackStart, centerY - trackHeight / 2f),
+            size = androidx.compose.ui.geometry.Size(thumbX - trackStart, trackHeight),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(trackHeight / 2f),
+        )
+        drawCircle(color = activeColor, radius = thumbRadius, center = androidx.compose.ui.geometry.Offset(thumbX, centerY))
+    }
+}
+
+@Composable
+private fun WalkingStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall)
+            Text(value, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+private fun localizedWalkingState(state: String): String = when (state.uppercase()) {
+    "STARTING" -> "準備中"
+    "RUNNING" -> "執行中"
+    "PAUSED" -> "已暫停"
+    "STOPPED" -> "已停止"
+    "COMPLETED" -> "已完成"
+    "ERROR" -> "發生錯誤"
+    "IDLE" -> "尚未開始"
+    else -> state
+}
+
+private fun localizedPlanWarning(warning: String): String = when {
+    warning.startsWith("Speed is above") -> {
+        val limit = warning.substringAfter("above ").substringBefore(" km/h")
+        "速度高於 $limit km/h；部分應用程式可能將其視為非步行資料。"
+    }
+    warning.startsWith("Step density is above") -> {
+        val limit = warning.substringAfter("above ").substringBefore(" steps/sec")
+        "步數密度高於 $limit 步／秒；資料可能被拒絕或忽略。"
+    }
+    else -> warning
 }
 
 private fun formatEta(millis: Long): String {
@@ -620,38 +986,86 @@ private fun ModeBackfillCard(
     } ?: false
 
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Mode 2: fill empty step-record windows", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Records are planned only where no StepsRecord exists. The limit is a theoretical reference, not a guarantee of Google Fit totals.",
-                style = MaterialTheme.typography.bodySmall,
-            )
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("空檔補步", style = MaterialTheme.typography.headlineSmall)
+                Text("只填入今天 12:00 後沒有步行紀錄的時間段", style = MaterialTheme.typography.bodyMedium)
+            }
             if (availability == null) {
-                Text(status, style = MaterialTheme.typography.bodySmall)
-            } else {
-                Text("Range ${formatLocalDateTime(availability.rangeStart)} – ${formatLocalDateTime(availability.rangeEnd)}")
-                Text("Empty windows: ${availability.availableWindows.size}; available time: ${formatDuration(availability.totalAvailableDuration.toMillis())}")
-                Text("Theoretical maximum: ${availability.maxSteps} steps (10 km/h, 0.35 m stride)")
-                Text("Last scan: ${formatLocalDateTime(availability.scannedAt)}", style = MaterialTheme.typography.bodySmall)
-                Text(status, style = MaterialTheme.typography.bodySmall)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = steps,
-                    onValueChange = onStepsChange,
-                    modifier = Modifier.weight(1f),
-                    label = { Text("Steps to backfill") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    enabled = enabled && !scanning,
-                    isError = availability != null && requested !in 1..availability.maxSteps,
-                )
-                OutlinedButton(onClick = onRefresh, enabled = enabled && !scanning) {
-                    Text(if (scanning) "Scanning…" else "Refresh")
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("尚未取得可用空檔", style = MaterialTheme.typography.titleMedium)
+                        Text(status, style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = onRefresh, enabled = enabled && !scanning) {
+                            Icon(Icons.Default.Sync, contentDescription = null)
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(if (scanning) "掃描中…" else "掃描今日空檔")
+                        }
+                    }
                 }
-            }
-            Button(onClick = onWrite, enabled = canWrite) {
-                Icon(Icons.Default.CheckCircle, contentDescription = null)
-                Text("Fill oldest empty windows")
+            } else {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(18.dp),
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("目前最多可補步數", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            "${availability.maxSteps} 步",
+                            style = MaterialTheme.typography.displaySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        Text("以最快 10 km/h 計算，僅供上限參考", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WalkingStat(
+                        label = "可用時間",
+                        value = formatDuration(availability.totalAvailableDuration.toMillis()),
+                        modifier = Modifier.weight(1f),
+                    )
+                    WalkingStat(
+                        label = "空檔數量",
+                        value = "${availability.availableWindows.size} 段",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    "範圍：${formatLocalDateTime(availability.rangeStart)} – ${formatLocalDateTime(availability.rangeEnd)}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text("最近掃描：${formatLocalDateTime(availability.scannedAt)}", style = MaterialTheme.typography.bodySmall)
+                Text(status, style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = steps,
+                        onValueChange = onStepsChange,
+                        modifier = Modifier.weight(1f),
+                        label = { Text("要補入的步數") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        enabled = enabled && !scanning,
+                        isError = requested !in 1..availability.maxSteps,
+                        singleLine = true,
+                        supportingText = {
+                            Text("上限 ${availability.maxSteps} 步")
+                        },
+                    )
+                    OutlinedButton(onClick = onRefresh, enabled = enabled && !scanning) {
+                        Text(if (scanning) "掃描中…" else "重新掃描")
+                    }
+                }
+                Button(
+                    onClick = onWrite,
+                    enabled = canWrite,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null)
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("依時間順序填入空檔")
+                }
             }
         }
     }
@@ -676,24 +1090,34 @@ private fun ModeDirectCard(
     directStatus: String,
     onWrite: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+        shape = RoundedCornerShape(18.dp),
+    ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Direct step entry (advanced)", style = MaterialTheme.typography.titleMedium)
+            Text("直接寫入步數", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "僅供測試用：建立一筆短時間 Health Connect 步數紀錄。",
+                style = MaterialTheme.typography.bodySmall,
+            )
             OutlinedTextField(
                 value = steps,
                 onValueChange = onStepsChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Steps") },
+                label = { Text("步數") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                enabled = enabled,
+                singleLine = true,
             )
-            Button(onClick = onWrite, enabled = enabled) {
+            Button(onClick = onWrite, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.CheckCircle, contentDescription = null)
-                Text("Write now")
+                Spacer(modifier = Modifier.width(3.dp))
+                Text("立即寫入")
             }
             Text(directStatus, style = MaterialTheme.typography.bodySmall)
-            Spacer(modifier = Modifier.height(2.dp))
             Text(
-                "Google Fit display requires Google Fit to sync with Health Connect on this device.",
+                "Google Fit 是否顯示，取決於裝置上 Google Fit 與 Health Connect 的同步設定。",
                 style = MaterialTheme.typography.bodySmall,
             )
         }

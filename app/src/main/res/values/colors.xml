@@ -1,3 +1,4 @@
 <resources>
-    <color name="seed">#0F766E</color>
+    <color name="seed">#176B67</color>
+    <color name="app_background">#FFFBF7</color>
 </resources>

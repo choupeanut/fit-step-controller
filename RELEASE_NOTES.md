@@ -1,3 +1,22 @@
+# v1.1.1
+
+Interactive speed-slider fix and refreshed app presentation.
+
+## Fixed
+
+- Replaced the interrupted Material3 speed slider gesture with a dedicated horizontal drag surface that works inside the vertically scrollable screen.
+- Speed changes now continue while the thumb is dragged and are committed when the user releases it; track taps and the 3–10 km/h quick choices remain available.
+- Prevented progress broadcasts from overwriting the locally dragged speed until the gesture finishes.
+
+## Changed
+
+- Refined the Chinese walking/backfill layout and updated the cat-paw app icon assets.
+- Updated release metadata to version `1.1.1` / version code `9`.
+
+## Validation
+
+- Unit tests, Android connected tests, debug APK build, and emulator drag/release validation passed.
+
 # v1.1.0
 
 Documentation, release-readiness, and AI-agent safety update.

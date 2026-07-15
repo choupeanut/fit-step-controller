@@ -2,7 +2,7 @@
     <style name="Theme.FitStepController" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#F7FAF8</item>
-        <item name="android:navigationBarColor">#F7FAF8</item>
+        <item name="android:statusBarColor">#FFFBF7</item>
+        <item name="android:navigationBarColor">#FFFBF7</item>
     </style>
 </resources>
