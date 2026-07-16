@@ -34,7 +34,7 @@ The app is a Health Connect test client for verified step records. AI changes mu
 
 ## Mode 2 rules
 
-- The availability range is the device-local current date from 12:00 through the scan instant. Before noon, there is no range.
+- The availability range is the device-local current date from 00:00 (midnight) through the scan instant. At exactly midnight, there is no positive-duration range yet.
 - Read all accessible raw `StepsRecord` sources with pagination. Use a conservative union of intervals so duplicate sources cannot create an unsafe overlap.
 - The theoretical reference uses 10 km/h and 0.35 m stride: approximately 7.9365 steps/sec.
 - Re-scan before each allocation. Allocate oldest-first, keep intervals non-overlapping, and retain a deterministic `batchId:index` client record ID for retries.
@@ -60,7 +60,7 @@ The app is a Health Connect test client for verified step records. AI changes mu
 - Does the change preserve raw-record verification and idempotent IDs?
 - Does it distinguish all-source availability reads from app-origin exact verification reads?
 - Are interval boundaries normalized to epoch milliseconds before comparing with Health Connect?
-- Are pagination, timezone, noon boundary, overlap, pause, restart, and provider failure cases tested?
+- Are pagination, timezone, midnight boundary, overlap, pause, restart, and provider failure cases tested?
 - Does the UI state match persisted service state after process recreation?
 - Are Android foreground-service, battery, force-stop, and Health Connect permission limits documented rather than hidden?
 - Are README, design docs, release notes, and APK version metadata consistent?

@@ -122,7 +122,7 @@ class HealthConnectStepWriter(
         return records
     }
 
-    /** Scans today-noon to now, querying 24 hours before noon for crossing records. */
+    /** Scans today's local midnight to now, querying 24 hours before midnight for crossing records. */
     suspend fun readStepAvailability(
         rangeStart: Instant,
         rangeEnd: Instant,
@@ -145,13 +145,13 @@ class HealthConnectStepWriter(
         )
     }
 
-    /** Returns null before local noon; otherwise scans the current local day's noon-to-now range. */
-    suspend fun readTodayNoonAvailability(
+    /** Scans the current local day's midnight-to-now range. */
+    suspend fun readTodayMidnightAvailability(
         now: Instant = clock(),
         lookback: Duration = Duration.ofHours(24),
         stepsPerSecond: Double = StepAvailabilityPlanner.FAST_STEPS_PER_SECOND,
     ): StepAvailability? {
-        val range = StepAvailabilityPlanner.todayNoonRange(now, zoneId) ?: return null
+        val range = StepAvailabilityPlanner.todayMidnightRange(now, zoneId) ?: return null
         return readStepAvailability(
             rangeStart = range.first,
             rangeEnd = range.second,

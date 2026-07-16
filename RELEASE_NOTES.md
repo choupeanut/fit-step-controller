@@ -1,3 +1,16 @@
+# v1.1.2
+
+Corrected Mode 2's daily availability window.
+
+## Fixed
+
+- Empty-window scanning now covers the device-local calendar day from `00:00` (midnight) through the scan instant, instead of starting at noon.
+- Updated the Mode 2 UI, documentation, and timezone-boundary test to match the midnight start.
+
+## Validation
+
+- Unit tests, Android lint, debug APK, release APK, and connected Android tests pass.
+
 # v1.1.1
 
 Interactive speed-slider fix and refreshed app presentation.

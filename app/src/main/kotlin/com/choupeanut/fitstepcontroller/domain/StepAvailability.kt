@@ -2,7 +2,6 @@ package com.choupeanut.fitstepcontroller.domain
 
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalTime
 import java.time.ZoneId
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -196,11 +195,11 @@ object StepAvailabilityPlanner {
         }
     }
 
-    /** Returns today's local noon-to-now range, or null before local noon. */
-    fun todayNoonRange(now: Instant, zoneId: ZoneId): Pair<Instant, Instant>? {
+    /** Returns today's local midnight-to-now range, or null at the exact midnight boundary. */
+    fun todayMidnightRange(now: Instant, zoneId: ZoneId): Pair<Instant, Instant>? {
         val localNow = now.atZone(zoneId)
-        val noon = localNow.toLocalDate().atTime(LocalTime.NOON).atZone(zoneId).toInstant()
-        return if (now.isAfter(noon)) noon to now else null
+        val midnight = localNow.toLocalDate().atStartOfDay(zoneId).toInstant()
+        return if (now.isAfter(midnight)) midnight to now else null
     }
 
     /** Returns the query start required to catch records crossing the range boundary. */

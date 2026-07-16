@@ -15,12 +15,12 @@ Fit Step Controller is an Android test app for writing verified step records to 
 
 ### Mode 2 — empty-window backfill
 
-- Scans all readable Health Connect `StepsRecord` sources for the local-time range `12:00` to now.
+- Scans all readable Health Connect `StepsRecord` sources for the local-time range `00:00` (midnight) to now.
 - Treats the union of existing raw record intervals as occupied and shows the remaining empty windows.
 - Calculates a theoretical upper bound at `10 km/h` with a `0.35 m` stride (`7.9365 steps/sec`, about `28,571 steps/hour`).
 - Accepts a requested count up to the current capacity and fills empty windows oldest-first.
 - Re-scans before each write, uses deterministic batch record IDs, verifies each exact record, and reports partial completion if the provider changes during the batch.
-- If the current time is before local noon, the available range is empty.
+- The scan starts at the beginning of the device-local calendar day; at exactly `00:00` the range has no elapsed duration yet.
 
 ### Advanced direct entry
 
@@ -63,7 +63,7 @@ The repository's GitHub Actions workflow runs unit tests, builds both APK varian
 
 ## Manual validation checklist
 
-- Grant Health Connect permissions and refresh Mode 2. Confirm the displayed local noon-to-now range, empty-window count, available duration, and theoretical capacity.
+- Grant Health Connect permissions and refresh Mode 2. Confirm the displayed local midnight-to-now range, empty-window count, available duration, and theoretical capacity.
 - Request a value within the displayed capacity. Confirm the resulting app-origin records are inside previously empty windows and do not overlap existing records.
 - Start Mode 1 with a short target. Confirm the first verified cadence update, move the speed slider while running, and confirm the notification/UI ETA changes.
 - Lock the screen and remove the app task from recents. Confirm the foreground notification and persisted progress continue.

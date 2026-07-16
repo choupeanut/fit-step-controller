@@ -181,11 +181,11 @@ private fun FitStepApp(activity: ComponentActivity) {
             HealthConnectStepWriter(
                 client = healthGateway.client(),
                 appPackageName = activity.packageName,
-            ).readTodayNoonAvailability()
+            ).readTodayMidnightAvailability()
         }.onSuccess { result ->
             availability = result
             availabilityStatus = if (result == null) {
-                "今日可掃描時段從本地 12:00 開始"
+                "今日可掃描時段從本地 00:00 開始"
             } else {
                 "已找到 ${result.availableWindows.size} 個可用空檔"
             }
@@ -473,8 +473,8 @@ private fun FitStepApp(activity: ComponentActivity) {
                                                 )
                                                 // Re-scan immediately before planning writes so a new
                                                 // record from another source cannot be overwritten.
-                                                val fresh = writer.readTodayNoonAvailability()
-                                                    ?: error("今日可掃描時段從本地 12:00 開始")
+                                                val fresh = writer.readTodayMidnightAvailability()
+                                                    ?: error("今日可掃描時段從本地 00:00 開始")
                                                 availability = fresh
                                                 require(requested <= fresh.maxSteps) {
                                                     "要求 $requested 步，超過重新掃描後的上限 ${fresh.maxSteps} 步"
@@ -695,9 +695,9 @@ private fun ModeWalkingCard(
                 }
             }
 
-    Text("調整步速", style = MaterialTheme.typography.titleMedium)
-    val speedControlsEnabled = enabled && !walkingUiState.isPaused
-    val sliderRange = 3f..12f
+            Text("調整步速", style = MaterialTheme.typography.titleMedium)
+            val speedControlsEnabled = enabled && !walkingUiState.isPaused
+            val sliderRange = 3f..12f
             SpeedSlider(
                 value = sliderValue,
                 valueRange = sliderRange,
@@ -989,7 +989,7 @@ private fun ModeBackfillCard(
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("空檔補步", style = MaterialTheme.typography.headlineSmall)
-                Text("只填入今天 12:00 後沒有步行紀錄的時間段", style = MaterialTheme.typography.bodyMedium)
+                Text("只填入今天 00:00 後沒有步行紀錄的時間段", style = MaterialTheme.typography.bodyMedium)
             }
             if (availability == null) {
                 Surface(
