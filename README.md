@@ -23,12 +23,13 @@ The launcher artwork is a two-tone cat paw: a teal main paw for the app identity
 
 ### Mode 2 — empty-window backfill
 
-- Scans all readable Health Connect `StepsRecord` sources for the local-time range `00:00` (midnight) to now.
+- Scans all readable Health Connect `StepsRecord` sources for the recent 12-hour range by default, from `now - 12h` to now.
+- The **最多只從目前時間往前 12 小時補送步數** option is checked by default. Unchecking it restores the local-time range from `00:00` (midnight) to now.
 - Treats the union of existing raw record intervals as occupied and shows the remaining empty windows.
 - Calculates a theoretical upper bound at `10 km/h` with a `0.35 m` stride (`7.9365 steps/sec`, about `28,571 steps/hour`).
 - Accepts a requested count up to the current capacity and fills empty windows oldest-first.
 - Re-scans before each write, uses deterministic batch record IDs, verifies each exact record, and reports partial completion if the provider changes during the batch.
-- The scan starts at the beginning of the device-local calendar day; at exactly `00:00` the range has no elapsed duration yet.
+- When the 12-hour option is unchecked, the scan starts at the beginning of the device-local calendar day; at exactly `00:00` that range has no elapsed duration yet.
 
 ### Advanced direct entry
 
@@ -66,7 +67,7 @@ See Google's [Health Connect access instructions](https://support.google.com/and
 2. Select **Fit Step Controller**.
 3. Allow both **Read steps** and **Write steps**.
 4. Return to the app. The Health Connect banner should show that permissions are enabled.
-5. Open **空檔補步** and tap **掃描今日空檔** (the scan covers the device-local day from `00:00` to now).
+5. Open **空檔補步**. The default scan covers the previous 12 hours; uncheck **最多只從目前時間往前 12 小時補送步數** to scan the device-local day from `00:00` to now.
 
 Health Connect lets you manage an app's complete or individual read/write permissions from **App permissions**; see Google's [connected-app permission guide](https://support.google.com/android/answer/12201230?hl=en).
 
@@ -116,7 +117,7 @@ The repository's GitHub Actions workflow runs unit tests, builds both APK varian
 
 ## Manual validation checklist
 
-- Grant Health Connect permissions and refresh Mode 2. Confirm the displayed local midnight-to-now range, empty-window count, available duration, and theoretical capacity.
+- Grant Health Connect permissions and refresh Mode 2. Confirm the default displayed range starts 12 hours before the current time, then uncheck the 12-hour option and confirm the displayed range changes to local midnight-to-now.
 - Request a value within the displayed capacity. Confirm the resulting app-origin records are inside previously empty windows and do not overlap existing records.
 - Start Mode 1 with a short target. Confirm the first verified cadence update, move the speed slider while running, and confirm the notification/UI ETA changes.
 - Lock the screen and remove the app task from recents. Confirm the foreground notification and persisted progress continue.

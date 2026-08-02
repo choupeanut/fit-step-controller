@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -62,6 +63,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -166,6 +168,7 @@ private fun FitStepApp(activity: ComponentActivity) {
     var availabilityStatus by remember { mutableStateOf("尚未掃描") }
     var availabilityScanning by remember { mutableStateOf(false) }
     var backfillSteps by remember { mutableStateOf("1000") }
+    var useLast12Hours by rememberSaveable { mutableStateOf(true) }
     var selectedSection by remember { mutableStateOf(AppSection.WALKING) }
 
     val healthPermissionLauncher = rememberLauncherForActivityResult(healthGateway.permissionContract()) { granted ->
@@ -181,7 +184,7 @@ private fun FitStepApp(activity: ComponentActivity) {
             HealthConnectStepWriter(
                 client = healthGateway.client(),
                 appPackageName = activity.packageName,
-            ).readTodayMidnightAvailability()
+            ).readBackfillAvailability(useLast12Hours = useLast12Hours)
         }.onSuccess { result ->
             availability = result
             availabilityStatus = if (result == null) {
@@ -226,11 +229,11 @@ private fun FitStepApp(activity: ComponentActivity) {
         }
     }
 
-    LaunchedEffect(hasHealthPermission) {
+    LaunchedEffect(hasHealthPermission, useLast12Hours) {
         if (hasHealthPermission) scanAvailability()
     }
 
-    DisposableEffect(hasHealthPermission) {
+    DisposableEffect(hasHealthPermission, useLast12Hours) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && hasHealthPermission) {
                 scope.launch { scanAvailability() }
@@ -442,6 +445,12 @@ private fun FitStepApp(activity: ComponentActivity) {
                                     enabled = hasHealthPermission,
                                     steps = backfillSteps,
                                     onStepsChange = { backfillSteps = it.filter(Char::isDigit) },
+                                    useLast12Hours = useLast12Hours,
+                                    onUseLast12HoursChange = { checked ->
+                                        useLast12Hours = checked
+                                        availability = null
+                                        availabilityStatus = "補步範圍已變更，正在重新掃描"
+                                    },
                                     availability = availability,
                                     status = availabilityStatus,
                                     scanning = availabilityScanning,
@@ -455,7 +464,11 @@ private fun FitStepApp(activity: ComponentActivity) {
                                             return@ModeBackfillCard
                                         }
                                         if (current == null) {
-                                            availabilityStatus = "尚未取得今日空檔，請先重新掃描"
+                                            availabilityStatus = if (useLast12Hours) {
+                                                "尚未取得最近 12 小時空檔，請先重新掃描"
+                                            } else {
+                                                "尚未取得今日空檔，請先重新掃描"
+                                            }
                                             status = availabilityStatus
                                             return@ModeBackfillCard
                                         }
@@ -473,8 +486,15 @@ private fun FitStepApp(activity: ComponentActivity) {
                                                 )
                                                 // Re-scan immediately before planning writes so a new
                                                 // record from another source cannot be overwritten.
-                                                val fresh = writer.readTodayMidnightAvailability()
-                                                    ?: error("今日可掃描時段從本地 00:00 開始")
+                                                val fresh = writer.readBackfillAvailability(
+                                                    useLast12Hours = useLast12Hours,
+                                                ) ?: error(
+                                                    if (useLast12Hours) {
+                                                        "最近 12 小時尚無可掃描時段"
+                                                    } else {
+                                                        "今日可掃描時段從本地 00:00 開始"
+                                                    },
+                                                )
                                                 availability = fresh
                                                 require(requested <= fresh.maxSteps) {
                                                     "要求 $requested 步，超過重新掃描後的上限 ${fresh.maxSteps} 步"
@@ -974,6 +994,8 @@ private fun ModeBackfillCard(
     enabled: Boolean,
     steps: String,
     onStepsChange: (String) -> Unit,
+    useLast12Hours: Boolean,
+    onUseLast12HoursChange: (Boolean) -> Unit,
     availability: StepAvailability?,
     status: String,
     scanning: Boolean,
@@ -989,7 +1011,22 @@ private fun ModeBackfillCard(
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("空檔補步", style = MaterialTheme.typography.headlineSmall)
-                Text("只填入今天 00:00 後沒有步行紀錄的時間段", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (useLast12Hours) {
+                        "只填入最近 12 小時內沒有步行紀錄的時間段"
+                    } else {
+                        "只填入今天 00:00 後沒有步行紀錄的時間段"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = useLast12Hours,
+                    onCheckedChange = { checked -> onUseLast12HoursChange(checked) },
+                    enabled = enabled && !scanning,
+                )
+                Text("最多只從目前時間往前 12 小時補送步數")
             }
             if (availability == null) {
                 Surface(
@@ -1002,7 +1039,15 @@ private fun ModeBackfillCard(
                         OutlinedButton(onClick = onRefresh, enabled = enabled && !scanning) {
                             Icon(Icons.Default.Sync, contentDescription = null)
                             Spacer(modifier = Modifier.width(3.dp))
-                            Text(if (scanning) "掃描中…" else "掃描今日空檔")
+                            Text(
+                                if (scanning) {
+                                    "掃描中…"
+                                } else if (useLast12Hours) {
+                                    "掃描最近 12 小時空檔"
+                                } else {
+                                    "掃描今日空檔"
+                                },
+                            )
                         }
                     }
                 }

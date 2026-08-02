@@ -99,4 +99,13 @@ class StepAvailabilityPlannerTest {
             atMidnight to afterMidnight,
         )
     }
+
+    @Test
+    fun last12HoursRangeAlwaysCoversExactlyThePrevious12Hours() {
+        val now = Instant.parse("2026-07-14T04:30:00Z")
+
+        assertThat(StepAvailabilityPlanner.last12HoursRange(now)).isEqualTo(
+            Instant.parse("2026-07-13T16:30:00Z") to now,
+        )
+    }
 }

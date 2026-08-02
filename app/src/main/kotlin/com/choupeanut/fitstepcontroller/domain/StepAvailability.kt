@@ -68,6 +68,7 @@ data class BackfillAllocation(
 object StepAvailabilityPlanner {
     const val FAST_SPEED_KMH = 10.0
     const val FAST_STRIDE_METERS = 0.35
+    const val BACKFILL_LOOKBACK_HOURS = 12L
     const val MIN_GAP_MILLIS = 1_000L
 
     val FAST_STEPS_PER_SECOND: Double =
@@ -200,6 +201,11 @@ object StepAvailabilityPlanner {
         val localNow = now.atZone(zoneId)
         val midnight = localNow.toLocalDate().atStartOfDay(zoneId).toInstant()
         return if (now.isAfter(midnight)) midnight to now else null
+    }
+
+    /** Returns the fixed recent range used by the default Mode 2 backfill option. */
+    fun last12HoursRange(now: Instant): Pair<Instant, Instant> {
+        return now.minus(Duration.ofHours(BACKFILL_LOOKBACK_HOURS)) to now
     }
 
     /** Returns the query start required to catch records crossing the range boundary. */

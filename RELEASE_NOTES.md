@@ -1,3 +1,18 @@
+# v1.2.0
+
+Added a configurable recent-window limit for Mode 2 empty-window backfill.
+
+## Added
+
+- Mode 2 now defaults to scanning and backfilling only the previous 12 hours.
+- Added an option to restore the original local-midnight-to-now scan range.
+- Changing the range option clears stale availability data and rescans before writing.
+- Updated the Mode 2 documentation and range-planner unit tests.
+
+## Validation
+
+- Unit tests, Android lint, debug APK, and release APK builds pass locally.
+
 # v1.1.2
 
 Corrected Mode 2's daily availability window.
