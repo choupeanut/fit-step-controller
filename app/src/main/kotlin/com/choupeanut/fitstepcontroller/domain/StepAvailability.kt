@@ -203,9 +203,11 @@ object StepAvailabilityPlanner {
         return if (now.isAfter(midnight)) midnight to now else null
     }
 
-    /** Returns the fixed recent range used by the default Mode 2 backfill option. */
-    fun last12HoursRange(now: Instant): Pair<Instant, Instant> {
-        return now.minus(Duration.ofHours(BACKFILL_LOOKBACK_HOURS)) to now
+    /** Returns today's elapsed range, capped to the most recent 12 hours. */
+    fun todayUpToLast12HoursRange(now: Instant, zoneId: ZoneId): Pair<Instant, Instant>? {
+        val todayRange = todayMidnightRange(now, zoneId) ?: return null
+        val recentStart = now.minus(Duration.ofHours(BACKFILL_LOOKBACK_HOURS))
+        return maxOf(todayRange.first, recentStart) to now
     }
 
     /** Returns the query start required to catch records crossing the range boundary. */

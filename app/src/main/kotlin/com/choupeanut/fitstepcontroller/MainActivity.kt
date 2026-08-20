@@ -168,7 +168,7 @@ private fun FitStepApp(activity: ComponentActivity) {
     var availabilityStatus by remember { mutableStateOf("尚未掃描") }
     var availabilityScanning by remember { mutableStateOf(false) }
     var backfillSteps by remember { mutableStateOf("1000") }
-    var useLast12Hours by rememberSaveable { mutableStateOf(true) }
+    var limitToLast12Hours by rememberSaveable { mutableStateOf(true) }
     var selectedSection by remember { mutableStateOf(AppSection.WALKING) }
 
     val healthPermissionLauncher = rememberLauncherForActivityResult(healthGateway.permissionContract()) { granted ->
@@ -180,23 +180,26 @@ private fun FitStepApp(activity: ComponentActivity) {
     suspend fun scanAvailability() {
         if (!hasHealthPermission || availabilityScanning) return
         availabilityScanning = true
-        runCatching {
-            HealthConnectStepWriter(
-                client = healthGateway.client(),
-                appPackageName = activity.packageName,
-            ).readBackfillAvailability(useLast12Hours = useLast12Hours)
-        }.onSuccess { result ->
-            availability = result
-            availabilityStatus = if (result == null) {
-                "今日可掃描時段從本地 00:00 開始"
-            } else {
-                "已找到 ${result.availableWindows.size} 個可用空檔"
+        try {
+            runCatching {
+                HealthConnectStepWriter(
+                    client = healthGateway.client(),
+                    appPackageName = activity.packageName,
+                ).readBackfillAvailability(limitToLast12Hours = limitToLast12Hours)
+            }.onSuccess { result ->
+                availability = result
+                availabilityStatus = if (result == null) {
+                    "今日可掃描時段從本地 00:00 開始"
+                } else {
+                    "已找到 ${result.availableWindows.size} 個可用空檔"
+                }
+            }.onFailure { failure ->
+                availabilityStatus = failure.message ?: "無法讀取 Health Connect 步數"
+                status = availabilityStatus
             }
-        }.onFailure { failure ->
-            availabilityStatus = failure.message ?: "無法讀取 Health Connect 步數"
-            status = availabilityStatus
+        } finally {
+            availabilityScanning = false
         }
-        availabilityScanning = false
     }
 
     LaunchedEffect(Unit) {
@@ -229,11 +232,11 @@ private fun FitStepApp(activity: ComponentActivity) {
         }
     }
 
-    LaunchedEffect(hasHealthPermission, useLast12Hours) {
+    LaunchedEffect(hasHealthPermission, limitToLast12Hours) {
         if (hasHealthPermission) scanAvailability()
     }
 
-    DisposableEffect(hasHealthPermission, useLast12Hours) {
+    DisposableEffect(hasHealthPermission, limitToLast12Hours) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && hasHealthPermission) {
                 scope.launch { scanAvailability() }
@@ -445,9 +448,9 @@ private fun FitStepApp(activity: ComponentActivity) {
                                     enabled = hasHealthPermission,
                                     steps = backfillSteps,
                                     onStepsChange = { backfillSteps = it.filter(Char::isDigit) },
-                                    useLast12Hours = useLast12Hours,
-                                    onUseLast12HoursChange = { checked ->
-                                        useLast12Hours = checked
+                                    limitToLast12Hours = limitToLast12Hours,
+                                    onLimitToLast12HoursChange = { checked ->
+                                        limitToLast12Hours = checked
                                         availability = null
                                         availabilityStatus = "補步範圍已變更，正在重新掃描"
                                     },
@@ -464,8 +467,8 @@ private fun FitStepApp(activity: ComponentActivity) {
                                             return@ModeBackfillCard
                                         }
                                         if (current == null) {
-                                            availabilityStatus = if (useLast12Hours) {
-                                                "尚未取得最近 12 小時空檔，請先重新掃描"
+                                            availabilityStatus = if (limitToLast12Hours) {
+                                                "尚未取得今天內最近 12 小時空檔，請先重新掃描"
                                             } else {
                                                 "尚未取得今日空檔，請先重新掃描"
                                             }
@@ -477,48 +480,51 @@ private fun FitStepApp(activity: ComponentActivity) {
                                             status = availabilityStatus
                                             return@ModeBackfillCard
                                         }
+                                        availabilityScanning = true
                                         scope.launch {
-                                            availabilityScanning = true
-                                            runCatching {
-                                                val writer = HealthConnectStepWriter(
-                                                    client = healthGateway.client(),
-                                                    appPackageName = activity.packageName,
-                                                )
-                                                // Re-scan immediately before planning writes so a new
-                                                // record from another source cannot be overwritten.
-                                                val fresh = writer.readBackfillAvailability(
-                                                    useLast12Hours = useLast12Hours,
-                                                ) ?: error(
-                                                    if (useLast12Hours) {
-                                                        "最近 12 小時尚無可掃描時段"
+                                            try {
+                                                runCatching {
+                                                    val writer = HealthConnectStepWriter(
+                                                        client = healthGateway.client(),
+                                                        appPackageName = activity.packageName,
+                                                    )
+                                                    // Re-scan immediately before planning writes so a new
+                                                    // record from another source cannot be overwritten.
+                                                    val fresh = writer.readBackfillAvailability(
+                                                        limitToLast12Hours = limitToLast12Hours,
+                                                    ) ?: error(
+                                                        if (limitToLast12Hours) {
+                                                            "今天內最近 12 小時尚無可掃描時段"
+                                                        } else {
+                                                            "今日可掃描時段從本地 00:00 開始"
+                                                        },
+                                                    )
+                                                    availability = fresh
+                                                    require(requested <= fresh.maxSteps) {
+                                                        "要求 $requested 步，超過重新掃描後的上限 ${fresh.maxSteps} 步"
+                                                    }
+                                                    writer.backfillAvailableSteps(
+                                                        rangeStart = fresh.rangeStart,
+                                                        rangeEnd = fresh.rangeEnd,
+                                                        requestedSteps = requested,
+                                                        batchId = "mode2:${UUID.randomUUID()}",
+                                                    )
+                                                }.onSuccess { result ->
+                                                    availability = result.finalAvailability
+                                                    val message = if (result.completed) {
+                                                        "Mode 2 已在 ${result.allocations.size} 個空檔寫入 ${result.writtenSteps} 步"
                                                     } else {
-                                                        "今日可掃描時段從本地 00:00 開始"
-                                                    },
-                                                )
-                                                availability = fresh
-                                                require(requested <= fresh.maxSteps) {
-                                                    "要求 $requested 步，超過重新掃描後的上限 ${fresh.maxSteps} 步"
+                                                        "Mode 2 已寫入 ${result.writtenSteps}/${result.requestedSteps} 步；${result.failure ?: "尚未完成"}"
+                                                    }
+                                                    availabilityStatus = message
+                                                    status = message
+                                                }.onFailure { failure ->
+                                                    availabilityStatus = failure.message ?: "Mode 2 補步失敗"
+                                                    status = availabilityStatus
                                                 }
-                                                writer.backfillAvailableSteps(
-                                                    rangeStart = fresh.rangeStart,
-                                                    rangeEnd = fresh.rangeEnd,
-                                                    requestedSteps = requested,
-                                                    batchId = "mode2:${UUID.randomUUID()}",
-                                                )
-                                            }.onSuccess { result ->
-                                                availability = result.finalAvailability
-                                                val message = if (result.completed) {
-                                                    "Mode 2 已在 ${result.allocations.size} 個空檔寫入 ${result.writtenSteps} 步"
-                                                } else {
-                                                    "Mode 2 已寫入 ${result.writtenSteps}/${result.requestedSteps} 步；${result.failure ?: "尚未完成"}"
-                                                }
-                                                availabilityStatus = message
-                                                status = message
-                                            }.onFailure { failure ->
-                                                availabilityStatus = failure.message ?: "Mode 2 補步失敗"
-                                                status = availabilityStatus
+                                            } finally {
+                                                availabilityScanning = false
                                             }
-                                            availabilityScanning = false
                                         }
                                     },
                                 )
@@ -994,8 +1000,8 @@ private fun ModeBackfillCard(
     enabled: Boolean,
     steps: String,
     onStepsChange: (String) -> Unit,
-    useLast12Hours: Boolean,
-    onUseLast12HoursChange: (Boolean) -> Unit,
+    limitToLast12Hours: Boolean,
+    onLimitToLast12HoursChange: (Boolean) -> Unit,
     availability: StepAvailability?,
     status: String,
     scanning: Boolean,
@@ -1012,8 +1018,8 @@ private fun ModeBackfillCard(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("空檔補步", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    if (useLast12Hours) {
-                        "只填入最近 12 小時內沒有步行紀錄的時間段"
+                    if (limitToLast12Hours) {
+                        "只填入今天 00:00 後、最多最近 12 小時內沒有步行紀錄的時間段"
                     } else {
                         "只填入今天 00:00 後沒有步行紀錄的時間段"
                     },
@@ -1022,11 +1028,11 @@ private fun ModeBackfillCard(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(
-                    checked = useLast12Hours,
-                    onCheckedChange = { checked -> onUseLast12HoursChange(checked) },
+                    checked = limitToLast12Hours,
+                    onCheckedChange = { checked -> onLimitToLast12HoursChange(checked) },
                     enabled = enabled && !scanning,
                 )
-                Text("最多只從目前時間往前 12 小時補送步數")
+                Text("只從今天 00:00 後，最多往前 12 小時補送步數")
             }
             if (availability == null) {
                 Surface(
@@ -1042,8 +1048,8 @@ private fun ModeBackfillCard(
                             Text(
                                 if (scanning) {
                                     "掃描中…"
-                                } else if (useLast12Hours) {
-                                    "掃描最近 12 小時空檔"
+                                } else if (limitToLast12Hours) {
+                                    "掃描今天內最近 12 小時空檔"
                                 } else {
                                     "掃描今日空檔"
                                 },

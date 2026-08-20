@@ -1,3 +1,14 @@
+# Unreleased
+
+## Fixed
+
+- Mode 2's default 12-hour limit is now clamped to the device-local day start, preventing availability planning and writes from crossing into the previous local date.
+- Scan and pre-write re-scan continue to share the same range, and the UI now states that the limit applies only after today's `00:00` boundary.
+
+## Validation
+
+- Unit tests, Android lint, debug APK, and release APK builds pass locally.
+
 # v1.2.0
 
 Added a configurable recent-window limit for Mode 2 empty-window backfill.

@@ -148,20 +148,20 @@ class HealthConnectStepWriter(
     /**
      * Scans the Mode 2 range selected by the user.
      *
-     * The default is the fixed range from 12 hours before [now] through [now].
+     * The default is today's elapsed range, capped to 12 hours before [now].
      * When disabled, this preserves the original local-midnight-to-now behavior.
      */
     suspend fun readBackfillAvailability(
-        useLast12Hours: Boolean = true,
+        limitToLast12Hours: Boolean = true,
         now: Instant = clock(),
         lookback: Duration = Duration.ofHours(24),
         stepsPerSecond: Double = StepAvailabilityPlanner.FAST_STEPS_PER_SECOND,
     ): StepAvailability? {
-        val range = if (useLast12Hours) {
-            StepAvailabilityPlanner.last12HoursRange(now)
+        val range = if (limitToLast12Hours) {
+            StepAvailabilityPlanner.todayUpToLast12HoursRange(now, zoneId)
         } else {
-            StepAvailabilityPlanner.todayMidnightRange(now, zoneId) ?: return null
-        }
+            StepAvailabilityPlanner.todayMidnightRange(now, zoneId)
+        } ?: return null
         return readStepAvailability(
             rangeStart = range.first,
             rangeEnd = range.second,
@@ -177,7 +177,7 @@ class HealthConnectStepWriter(
         stepsPerSecond: Double = StepAvailabilityPlanner.FAST_STEPS_PER_SECOND,
     ): StepAvailability? {
         return readBackfillAvailability(
-            useLast12Hours = false,
+            limitToLast12Hours = false,
             now = now,
             lookback = lookback,
             stepsPerSecond = stepsPerSecond,

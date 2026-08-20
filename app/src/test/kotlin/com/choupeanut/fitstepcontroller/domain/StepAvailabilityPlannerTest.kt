@@ -101,11 +101,44 @@ class StepAvailabilityPlannerTest {
     }
 
     @Test
-    fun last12HoursRangeAlwaysCoversExactlyThePrevious12Hours() {
-        val now = Instant.parse("2026-07-14T04:30:00Z")
+    fun todayUpToLast12HoursRangeClampsToLocalDayStartBeforeTwelveElapsedHours() {
+        val zone = ZoneId.of("Asia/Taipei")
+        val now = Instant.parse("2026-07-14T00:30:00Z")
 
-        assertThat(StepAvailabilityPlanner.last12HoursRange(now)).isEqualTo(
-            Instant.parse("2026-07-13T16:30:00Z") to now,
+        assertThat(StepAvailabilityPlanner.todayUpToLast12HoursRange(now, zone)).isEqualTo(
+            Instant.parse("2026-07-13T16:00:00Z") to now,
+        )
+    }
+
+    @Test
+    fun todayUpToLast12HoursRangeKeepsFullLookbackAfterTwelveElapsedHours() {
+        val zone = ZoneId.of("Asia/Taipei")
+        val now = Instant.parse("2026-07-14T07:30:00Z")
+
+        assertThat(StepAvailabilityPlanner.todayUpToLast12HoursRange(now, zone)).isEqualTo(
+            Instant.parse("2026-07-13T19:30:00Z") to now,
+        )
+    }
+
+    @Test
+    fun todayUpToLast12HoursRangeReturnsNullAtLocalMidnight() {
+        val zone = ZoneId.of("Asia/Taipei")
+        val localMidnight = Instant.parse("2026-07-13T16:00:00Z")
+
+        assertThat(StepAvailabilityPlanner.todayUpToLast12HoursRange(localMidnight, zone)).isNull()
+    }
+
+    @Test
+    fun todayUpToLast12HoursRangeUsesElapsedTimeAcrossDstGapAndOverlap() {
+        val zone = ZoneId.of("America/New_York")
+        val springNow = Instant.parse("2026-03-08T16:30:00Z")
+        val fallNow = Instant.parse("2026-11-01T16:30:00Z")
+
+        assertThat(StepAvailabilityPlanner.todayUpToLast12HoursRange(springNow, zone)).isEqualTo(
+            Instant.parse("2026-03-08T05:00:00Z") to springNow,
+        )
+        assertThat(StepAvailabilityPlanner.todayUpToLast12HoursRange(fallNow, zone)).isEqualTo(
+            Instant.parse("2026-11-01T04:30:00Z") to fallNow,
         )
     }
 }

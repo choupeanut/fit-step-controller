@@ -34,7 +34,8 @@ The app is a Health Connect test client for verified step records. AI changes mu
 
 ## Mode 2 rules
 
-- The availability range is the device-local current date from 00:00 (midnight) through the scan instant. At exactly midnight, there is no positive-duration range yet.
+- The default availability range is `[max(now - 12h, device-local day start), now]`; it must never cross into the previous local date. Disabling the limit uses the full local day from its start through the scan instant. At exactly local midnight, neither mode has a positive-duration range yet.
+- The initial scan and pre-write fresh scan must use the same range strategy. Pass the fresh scan's fixed `rangeStart` and `rangeEnd` through every batch re-scan, allocation, and write.
 - Read all accessible raw `StepsRecord` sources with pagination. Use a conservative union of intervals so duplicate sources cannot create an unsafe overlap.
 - The theoretical reference uses 10 km/h and 0.35 m stride: approximately 7.9365 steps/sec.
 - Re-scan before each allocation. Allocate oldest-first, keep intervals non-overlapping, and retain a deterministic `batchId:index` client record ID for retries.

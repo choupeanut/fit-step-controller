@@ -5,7 +5,7 @@
 Build an Android Health Connect step-entry app with two primary step-writing modes:
 
 1. Paced walking at 3-12 km/h with a target step count and automatic stop.
-2. Availability-aware backfill from empty local midnight-to-now step-record windows.
+2. Availability-aware backfill from empty windows in the device-local current day, capped to the most recent 12 hours by default with a full-day option.
 
 Advanced direct entry remains available for exact end-at-now placement.
 

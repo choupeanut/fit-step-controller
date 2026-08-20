@@ -7,6 +7,7 @@ import androidx.health.connect.client.request.ReadRecordsRequest
 import com.google.common.truth.Truth.assertThat
 import java.lang.reflect.Proxy
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZoneOffset
 import org.junit.Test
 
@@ -47,11 +48,48 @@ class HealthConnectStepWriterPaginationTest {
         assertThat(observedAscending).containsExactly(true, true)
     }
 
-    private fun stepRecord(start: Instant): StepsRecord {
+    @Test
+    fun defaultBackfillAvailabilityClampsRangeAndCrossingRecordToLocalDayStart() =
+        kotlinx.coroutines.test.runTest {
+            val zone = ZoneId.of("Asia/Taipei")
+            val localDayStart = Instant.parse("2026-07-13T16:00:00Z")
+            val now = Instant.parse("2026-07-14T00:30:00Z")
+            val crossingRecord = stepRecord(
+                start = localDayStart.minusSeconds(10 * 60),
+                end = localDayStart.plusSeconds(10 * 60),
+            )
+            val observedRequests = mutableListOf<ReadRecordsRequest<StepsRecord>>()
+            val client = proxyClient { request ->
+                observedRequests += request
+                ReadRecordsResponse(listOf(crossingRecord), "")
+            }
+
+            val availability = HealthConnectStepWriter(
+                client = client,
+                zoneId = zone,
+                appPackageName = "com.example.test",
+            ).readBackfillAvailability(now = now)
+
+            checkNotNull(availability)
+            assertThat(availability.rangeStart).isEqualTo(localDayStart)
+            assertThat(availability.rangeEnd).isEqualTo(now)
+            assertThat(availability.occupiedWindows.single().start).isEqualTo(localDayStart)
+            assertThat(availability.occupiedWindows.single().end)
+                .isEqualTo(localDayStart.plusSeconds(10 * 60))
+            assertThat(observedRequests).hasSize(1)
+            assertThat(observedRequests.single().timeRangeFilter.startTime)
+                .isEqualTo(localDayStart.minusSeconds(24 * 60 * 60))
+            assertThat(observedRequests.single().timeRangeFilter.endTime).isEqualTo(now)
+        }
+
+    private fun stepRecord(
+        start: Instant,
+        end: Instant = start.plusSeconds(10),
+    ): StepsRecord {
         return StepsRecord(
             startTime = start,
             startZoneOffset = ZoneOffset.UTC,
-            endTime = start.plusSeconds(10),
+            endTime = end,
             endZoneOffset = ZoneOffset.UTC,
             count = 100,
             metadata = androidx.health.connect.client.records.metadata.Metadata.manualEntry("test:${start.epochSecond}"),

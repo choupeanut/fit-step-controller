@@ -23,13 +23,13 @@ The launcher artwork is a two-tone cat paw: a teal main paw for the app identity
 
 ### Mode 2 — empty-window backfill
 
-- Scans all readable Health Connect `StepsRecord` sources for the recent 12-hour range by default, from `now - 12h` to now.
-- The **最多只從目前時間往前 12 小時補送步數** option is checked by default. Unchecking it restores the local-time range from `00:00` (midnight) to now.
+- Scans all readable Health Connect `StepsRecord` sources from `max(now - 12h, device-local day start)` to now by default, so the backfill range never crosses into the previous local date.
+- The **只從今天 00:00 後，最多往前 12 小時補送步數** option is checked by default. Unchecking it scans the full local-time range from `00:00` (midnight) to now.
 - Treats the union of existing raw record intervals as occupied and shows the remaining empty windows.
 - Calculates a theoretical upper bound at `10 km/h` with a `0.35 m` stride (`7.9365 steps/sec`, about `28,571 steps/hour`).
 - Accepts a requested count up to the current capacity and fills empty windows oldest-first.
 - Re-scans before each write, uses deterministic batch record IDs, verifies each exact record, and reports partial completion if the provider changes during the batch.
-- When the 12-hour option is unchecked, the scan starts at the beginning of the device-local calendar day; at exactly `00:00` that range has no elapsed duration yet.
+- At exactly local `00:00`, neither range mode has elapsed duration yet. Before 12 actual hours have elapsed in the local day, the checked and unchecked modes both start at the local day boundary.
 
 ### Advanced direct entry
 
@@ -40,6 +40,8 @@ The original direct-entry flow remains available for exact manual placement of o
 Health Connect is the only write target. The app verifies its own exact raw record—count, interval, and client record ID—before reporting success. Aggregate totals are diagnostics only.
 
 Mode 2 uses raw records from every granted source and deliberately treats their union as occupied. An empty window means that Health Connect returned no `StepsRecord` intersecting the window; it is not proof that the user was physically inactive. `StepsRecord` contains an interval and a total count, not the exact second of every step.
+
+The raw read query intentionally starts before the selected range so records crossing its boundary can still occupy the beginning of the day. Those records are clipped to the selected range for availability planning; Mode 2 allocations and writes never start before the returned `rangeStart`.
 
 Health Connect read requests are paginated and use the empty data-origin filter for the all-source scan. Aggregate reads can deduplicate Activity data according to user-selected source priority, so Google Fit and Health Connect dashboard totals may differ from the app's exact records.
 
@@ -67,7 +69,7 @@ See Google's [Health Connect access instructions](https://support.google.com/and
 2. Select **Fit Step Controller**.
 3. Allow both **Read steps** and **Write steps**.
 4. Return to the app. The Health Connect banner should show that permissions are enabled.
-5. Open **空檔補步**. The default scan covers the previous 12 hours; uncheck **最多只從目前時間往前 12 小時補送步數** to scan the device-local day from `00:00` to now.
+5. Open **空檔補步**. The default scan covers today only, capped to the most recent 12 hours; uncheck **只從今天 00:00 後，最多往前 12 小時補送步數** to scan the full device-local day from `00:00` to now.
 
 Health Connect lets you manage an app's complete or individual read/write permissions from **App permissions**; see Google's [connected-app permission guide](https://support.google.com/android/answer/12201230?hl=en).
 
@@ -117,7 +119,7 @@ The repository's GitHub Actions workflow runs unit tests, builds both APK varian
 
 ## Manual validation checklist
 
-- Grant Health Connect permissions and refresh Mode 2. Confirm the default displayed range starts 12 hours before the current time, then uncheck the 12-hour option and confirm the displayed range changes to local midnight-to-now.
+- Grant Health Connect permissions and refresh Mode 2. If fewer than 12 actual hours have elapsed since the local day started, confirm the default range starts at the local day boundary; otherwise confirm it starts 12 hours before now. Uncheck the option and confirm the range starts at the local day boundary.
 - Request a value within the displayed capacity. Confirm the resulting app-origin records are inside previously empty windows and do not overlap existing records.
 - Start Mode 1 with a short target. Confirm the first verified cadence update, move the speed slider while running, and confirm the notification/UI ETA changes.
 - Lock the screen and remove the app task from recents. Confirm the foreground notification and persisted progress continue.
