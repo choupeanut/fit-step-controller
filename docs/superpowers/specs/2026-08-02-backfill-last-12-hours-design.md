@@ -21,14 +21,14 @@
 
 ## 邊界與錯誤處理
 
-- 勾選模式的範圍固定為 `[max(now - 12h, local midnight), now]`：當地中午前從 00:00 開始，中午後維持完整 12 小時；一般 24 小時日的中午整點兩個候選起點相同。
+- 勾選模式的範圍固定為 `[max(now - 12h, local day start), now]`：從當日起點經過 12 個實際小時以前皆由當日起點開始，之後維持完整 12 小時。一般 24 小時日的切換點是本地中午；DST 切換日可能不是 12:00。
 - 正好在當地 00:00 時，勾選與取消勾選都沒有正長度掃描範圍，回傳 `null`。
 - `now - 12h` 使用固定 `Duration`，本地午夜使用 `zoneId` 的日曆與 `atStartOfDay` 計算，以正確處理 DST。掃描開始後固定該次範圍；裝置時區變更會在下一次建立 writer／掃描時生效。
 - Health Connect 讀取或補步失敗時，沿用現有狀態訊息與部分完成處理。
 
 ## 驗證
 
-- planner 單元測試確認凌晨時截斷於本地 00:00、下午時維持完整 12 小時、正好午夜時沒有有效範圍、非 UTC／DST 時區語意，以及既有午夜範圍行為不變。
+- planner 單元測試確認一般日期在當日起點後 12 小時內截斷、之後維持完整 12 小時、正好午夜時沒有有效範圍，以及非 UTC 時區與 DST gap／overlap 日期的語意；既有午夜範圍行為維持不變。
 - writer 測試確認一般掃描使用截斷後的 `rangeStart`／`rangeEnd`；程式路徑檢查確認 fresh re-scan 的結果原樣傳入 `backfillAvailableSteps`，且其內部所有讀取與配置均重用固定範圍。
 - 執行 `:app:testDebugUnitTest`、`:app:lintDebug`、`:app:assembleDebug` 與 `:app:assembleRelease`。
 - README 更新 Mode 2 預設範圍、取消選項後的行為與手動驗證步驟。
